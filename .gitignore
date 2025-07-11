@@ -142,3 +142,6 @@ Data
 **/build/
 *.egg-info
 **/__pycache__/
+
+blender_python_path.txt
+.conda_env

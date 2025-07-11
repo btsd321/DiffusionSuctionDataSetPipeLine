@@ -1,13 +1,4 @@
-import sys
-try:
-    # Blender环境 sys.executable 为 None，不影响调试服务启动
-    import debugpy
-    debugpy.listen(('localhost', 5678))
-    print("等待 VS Code 调试器连接...")
-    debugpy.wait_for_client()
-    print("调试器连接成功！")
-except Exception as e:
-    print(f"调试器启动失败: {e}")
+
 # -*- coding:utf-8 -*-
 """
 本文件用于在Blender中对单个物体进行批量渲染, 自动导入物体模型、设置相机参数, 并输出分割标签图。适用于数据集单物体分割标签的自动生成与渲染流程。

@@ -1,13 +1,4 @@
-# import sys
-# try:
-#     # Blender环境 sys.executable 为 None，不影响调试服务启动
-#     import debugpy
-#     debugpy.listen(('localhost', 5678))
-#     print("等待 VS Code 调试器连接...")
-#     debugpy.wait_for_client()
-#     print("调试器连接成功！")
-# except Exception as e:
-#     print(f"调试器启动失败: {e}")
+
 
 # -*- coding:utf-8 -*-
 """

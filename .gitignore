@@ -144,4 +144,4 @@ Data
 **/__pycache__/
 
 blender_python_path.txt
-.conda_env
+diffusion_suction_conda

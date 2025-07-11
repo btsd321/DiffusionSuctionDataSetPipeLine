@@ -15,7 +15,7 @@ import argparse
 # 命令行参数解析
 parser = argparse.ArgumentParser()
 # 数据集根目录
-parser.add_argument('--data_dir', type=str, default='D:/Project/DiffusionSuctionDataSetPipeLine/Data/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录

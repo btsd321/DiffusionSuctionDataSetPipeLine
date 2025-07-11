@@ -1,13 +1,13 @@
-import sys
-try:
-    # Blender环境 sys.executable 为 None，不影响调试服务启动
-    import debugpy
-    debugpy.listen(('localhost', 5678))
-    print("等待 VS Code 调试器连接...")
-    debugpy.wait_for_client()
-    print("调试器连接成功！")
-except Exception as e:
-    print(f"调试器启动失败: {e}")
+# import sys
+# try:
+#     # Blender环境 sys.executable 为 None，不影响调试服务启动
+#     import debugpy
+#     debugpy.listen(('localhost', 5678))
+#     print("等待 VS Code 调试器连接...")
+#     debugpy.wait_for_client()
+#     print("调试器连接成功！")
+# except Exception as e:
+#     print(f"调试器启动失败: {e}")
 
 # -*- coding:utf-8 -*-
 """
@@ -67,7 +67,7 @@ OUTDIR_dir = os.path.join(FILE_DIR, 'physics_result')
 if not os.path.exists(OUTDIR_dir):
     os.makedirs(OUTDIR_dir)
 
-from tkinter.tix import ButtonBox
+# from tkinter.tix import ButtonBox
 import pybullet
 import time
 import math

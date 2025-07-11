@@ -1,13 +1,3 @@
-import sys
-try:
-    # Blender环境 sys.executable 为 None，不影响调试服务启动
-    import debugpy
-    debugpy.listen(('localhost', 5678))
-    print("等待 VS Code 调试器连接...")
-    debugpy.wait_for_client()
-    print("调试器连接成功！")
-except Exception as e:
-    print(f"调试器启动失败: {e}")
 """
 本文件用于批量读取物理仿真结果csv, 计算物体在相机坐标系下的位姿, 并生成GT(Ground Truth)标注文件, 适用于数据集标注自动生成流程。
 

@@ -7,21 +7,61 @@
 """
 
 import sys
-CYCLE_idx_list = [sys.argv[4]]  # 从命令行参数获取当前循环编号
-SCENE_idx_list = [sys.argv[5]]  # 从命令行参数获取当前场景编号
-print("CYCLE_idx_list")
-print(CYCLE_idx_list )
-print("SCENE_idx_list")
-print(SCENE_idx_list )
-
 import os
 import argparse
+import re
+
+def parse_range_or_single(input_str):
+    """
+    解析输入字符串，支持以下格式：
+    - 单个值: "5" -> [5]
+    - 区间: "[1,10]" -> [1,2,3,4,5,6,7,8,9,10]
+    - 列表: "{1,3,5}" -> [1,3,5]
+    """
+    input_str = input_str.strip()
+    
+    # 如果是区间格式 [start,end]
+    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        return list(range(start, end + 1))
+    
+    # 如果是列表格式 {1,3,5,7}
+    list_match = re.match(r'^\{(.+)\}$', input_str)
+    if list_match:
+        values_str = list_match.group(1)
+        return [int(x.strip()) for x in values_str.split(',')]
+    
+    # 如果是单个数字
+    if input_str.isdigit():
+        return [int(input_str)]
+    
+    # 如果都不匹配，抛出错误
+    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
 
 # 命令行参数解析
 parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
+# 循环编号
+parser.add_argument('--cycle_idx', type=str, required=True, 
+                   help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+# 场景编号  
+parser.add_argument('--scene_idx', type=str, required=True, 
+                   help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 FLAGS = parser.parse_args()
+
+# 解析循环编号和场景编号
+try:
+    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_idx)
+    SCENE_idx_list = parse_range_or_single(FLAGS.scene_idx)
+except ValueError as e:
+    print(f"参数解析错误: {e}")
+    sys.exit(1)
+print("CYCLE_idx_list")
+print(CYCLE_idx_list)
+print("SCENE_idx_list")
+print(SCENE_idx_list)
 
 # 获取数据集根目录
 FILE_DIR = FLAGS.data_dir
@@ -322,6 +362,8 @@ class BlenderRenderClass:
                 if not os.path.exists(rgb_scene_path):
                     os.makedirs(rgb_scene_path)
 
+                print(f"正在渲染 Cycle: {cycle_id:04d}, Scene: {scene_id:03d}")
+                
                 self.grb_graph(rgb_scene_path)  # 配置RGB图输出节点
                 bpy.ops.render.render()         # 渲染并输出RGB图
                 self.depth_graph(depth_scene_path, segment_scene_path)  # 配置深度图和分割图输出节点
@@ -329,7 +371,10 @@ class BlenderRenderClass:
                 bpy.ops.render.render()         # 渲染并输出深度图和分割图
                 times.append(time.time()-start_time)
                 
+                print(f"完成渲染 Cycle: {cycle_id:04d}, Scene: {scene_id:03d}, 耗时: {times[-1]:.2f}秒")
+                
         np.save('times.npy', times)
+        print(f"总计渲染 {len(times)} 个场景，平均耗时: {np.mean(times):.2f}秒")
         print(times)
 if __name__ == '__main__':
     import time

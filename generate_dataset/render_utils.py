@@ -44,17 +44,17 @@ parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 # 循环编号
-parser.add_argument('--cycle_idx', type=str, required=True, 
+parser.add_argument('--cycle_list', type=str, required=True, 
                    help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 # 场景编号  
-parser.add_argument('--scene_idx', type=str, required=True, 
+parser.add_argument('--scene_list', type=str, required=True, 
                    help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 FLAGS = parser.parse_args()
 
 # 解析循环编号和场景编号
 try:
-    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_idx)
-    SCENE_idx_list = parse_range_or_single(FLAGS.scene_idx)
+    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
+    SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
 except ValueError as e:
     print(f"参数解析错误: {e}")
     sys.exit(1)

@@ -20,6 +20,8 @@ parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSe
 parser.add_argument('--cycle_num', type=int, default=100, help='循环次数')
 # 场景数量
 parser.add_argument('--scene_num', type=int, default=50, help='场景数量')
+# 是否显示GUI界面
+parser.add_argument('--visualize', action='store_true', help='设置该参数则显示GUI界面')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录
@@ -83,8 +85,8 @@ class GenerateSimulationResult:
         self.box_thickness = 0.05
         self.box_height =  0.50
         
-        # 是否显示GUI界面, 1为显示, 0为不显示
-        self.show_GUI = 0
+        # 是否显示GUI界面, 根据命令行参数决定
+        self.show_GUI = 1 if FLAGS.visualize else 0
         # 随机投放物体的位置范围[x_min, y_min, z_min, z_max, box底部厚度]
         self.random_range = [0.1, 0.1, 0.13, 0.15]
         self.box_bottom_thickness = 0.01

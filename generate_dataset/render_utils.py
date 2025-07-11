@@ -1,3 +1,13 @@
+import sys
+try:
+    # Blender环境 sys.executable 为 None，不影响调试服务启动
+    import debugpy
+    debugpy.listen(('localhost', 5678))
+    print("等待 VS Code 调试器连接...")
+    debugpy.wait_for_client()
+    print("调试器连接成功！")
+except Exception as e:
+    print(f"调试器启动失败: {e}")
 # -*- coding:utf-8 -*-
 """
 本文件用于在Blender中批量渲染三维场景, 自动导入物体模型、设置相机与光源参数, 并输出RGB图像、深度图和分割标签图。适用于数据集的自动生成与仿真渲染流程。
@@ -19,7 +29,7 @@ import argparse
 # 命令行参数解析
 parser = argparse.ArgumentParser()
 # 数据集根目录
-parser.add_argument('--data_dir', type=str, default='D:/Project/Diffusion_Suction/Data/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--data_dir', type=str, default='D:/Project/DiffusionSuctionDataSetPipeLine/Data/Diffusion_Suction_DataSet', help='数据集根目录')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录

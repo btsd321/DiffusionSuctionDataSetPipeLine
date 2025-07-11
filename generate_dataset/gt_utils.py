@@ -1,3 +1,13 @@
+import sys
+try:
+    # Blender环境 sys.executable 为 None，不影响调试服务启动
+    import debugpy
+    debugpy.listen(('localhost', 5678))
+    print("等待 VS Code 调试器连接...")
+    debugpy.wait_for_client()
+    print("调试器连接成功！")
+except Exception as e:
+    print(f"调试器启动失败: {e}")
 """
 本文件用于批量读取物理仿真结果csv, 计算物体在相机坐标系下的位姿, 并生成GT(Ground Truth)标注文件, 适用于数据集标注自动生成流程。
 
@@ -12,7 +22,7 @@ import argparse
 # 命令行参数解析
 parser = argparse.ArgumentParser()
 # 数据集根目录
-parser.add_argument('--data_dir', type=str, default='D:/Project/Diffusion_Suction/Data/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--data_dir', type=str, default='D:/Project/DiffusionSuctionDataSetPipeLine/Data/Diffusion_Suction_DataSet', help='数据集根目录')
 # 循环次数
 parser.add_argument('--cycle_num', type=int, default=100, help='循环次数')
 # 场景数量

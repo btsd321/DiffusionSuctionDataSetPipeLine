@@ -1,0 +1,29 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Attach to Blender",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "justMyCode": false //如果设置为 true，则调试器将单步执行用户代码。如果设置为 false，调试器将单步执行所有代码
+        },
+        {
+            "name": "Blender Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "D:/SoftWare/Blender/blender.exe", // 替换为Blender的实际路径
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "--python","${file}"
+            ],
+        }
+    ]
+}

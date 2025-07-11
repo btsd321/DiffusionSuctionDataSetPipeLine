@@ -80,6 +80,58 @@ import math
 # from easydict import EasyDict
 import csv
 
+class BlenderVersionCompat:
+    """Blender 版本兼容性辅助类"""
+    
+    def __init__(self):
+        self.version = bpy.app.version
+        self.is_new_version = self.version >= (2, 80, 0)
+        print(f"检测到 Blender 版本: {self.version[0]}.{self.version[1]}.{self.version[2]}")
+        
+    def select_object(self, obj, state=True):
+        """兼容不同版本的对象选择方法"""
+        if self.is_new_version:
+            obj.select_set(state)
+        else:
+            obj.select = state
+            
+    def get_light_type(self):
+        """获取灯光类型名称"""
+        return 'LIGHT' if self.is_new_version else 'LAMP'
+        
+    def get_light_add_op(self):
+        """获取添加灯光的操作符"""
+        return bpy.ops.object.light_add if self.is_new_version else bpy.ops.object.lamp_add
+    
+    def import_obj_file(self, filepath):
+        """兼容不同版本的OBJ文件导入方法"""
+        try:
+            # 尝试新版本的导入方式 (Blender 3.0+)
+            if hasattr(bpy.ops.wm, 'obj_import'):
+                bpy.ops.wm.obj_import(filepath=filepath)
+                print("使用新版本 OBJ 导入 API (3.0+)")
+            # 尝试中等版本的导入方式 (Blender 2.80-2.93)
+            elif hasattr(bpy.ops, 'import_scene') and hasattr(bpy.ops.import_scene, 'obj'):
+                bpy.ops.import_scene.obj(filepath=filepath)
+                print("使用中版本 OBJ 导入 API (2.80-2.93)")
+            # 旧版本的导入方式 (Blender 2.79-)
+            else:
+                bpy.ops.import_scene.obj(filepath=filepath)
+                print("使用旧版本 OBJ 导入 API (2.79-)")
+        except Exception as e:
+            print(f"OBJ 导入失败，尝试其他方法: {e}")
+            # 备用方法：如果上述都失败，尝试直接调用
+            try:
+                bpy.ops.wm.obj_import(filepath=filepath)
+            except:
+                try:
+                    bpy.ops.import_scene.obj(filepath=filepath)
+                except Exception as final_e:
+                    raise Exception(f"无法导入 OBJ 文件 {filepath}: {final_e}")
+
+# 创建全局兼容性对象
+blender_compat = BlenderVersionCompat()
+
 OBJ_PATH =  os.path.join(FILE_DIR, 'OBJ')
 OUTDIR_physics_result_dir =  os.path.join(FILE_DIR, 'physics_result')
 OUTDIR_dir_depth_images =  os.path.join(FILE_DIR, 'depth_images')
@@ -160,13 +212,18 @@ class BlenderRenderClass:
         bpy.data.objects["Camera"].rotation_mode = 'XYZ'
         bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
 
+        # 获取 Blender 版本并设置兼容性参数
+        light_type = blender_compat.get_light_type()
+        light_add_op = blender_compat.get_light_add_op()
+        print(f"使用 {'新版本' if blender_compat.is_new_version else '旧版本'} 灯光 API")
+
         # 清除现有的灯光对象, 避免多余光源影响渲染
         bpy.ops.object.select_all(action='DESELECT')
-        bpy.ops.object.select_by_type(type='LAMP')  # 选择所有灯光对象
+        bpy.ops.object.select_by_type(type=light_type)  # 选择所有灯光对象
         bpy.ops.object.delete()
 
         # 创建平行光(Sun Light), 用于模拟环境主光源
-        bpy.ops.object.lamp_add(type='SUN', location=(0, 0, 2))  # 添加平行光源并设置其位置
+        light_add_op(type='SUN', location=(0, 0, 2))  # 添加平行光源并设置其位置
         sun_light = bpy.context.object  # 获取刚创建的光源对象
         sun_light.name = "Sun_Light"  # 给光源命名
         # 设置平行光的属性
@@ -178,7 +235,7 @@ class BlenderRenderClass:
         locations_z = 1.3
         locations = [[0,0,locations_z],[0,locations_z*0.5,locations_z],[locations_z*0.5,0,locations_z],[0,-locations_z*0.5,locations_z],[-locations_z*0.5,0,locations_z]]
         for i in range(5):
-            bpy.ops.object.lamp_add(type='POINT', location=locations[i])
+            light_add_op(type='POINT', location=locations[i])
             point_light = bpy.context.object
             point_light.name = "Point_Light"
             point_light.data.energy = 10  # 设置光源强度
@@ -196,17 +253,22 @@ class BlenderRenderClass:
 
     def import_obj(self, obj_name, pose, instance_index):
         # 导入指定物体到Blender场景中, 并设置其位姿
+        
+        # 删除场景中所有网格对象
         for o in bpy.data.objects:
             if o.type == 'MESH':
-                o.select = True
+                blender_compat.select_object(o, True)
             else:
-                o.select = False
+                blender_compat.select_object(o, False)
         bpy.ops.object.delete()
-        # 删除场景中所有网格对象
     
         for instance_index_ in instance_index:
             file_path = os.path.join(OBJ_PATH, obj_name[instance_index_] ,'object.obj')
-            bpy.ops.import_scene.obj(filepath=file_path)
+            print(f"正在导入 OBJ 文件: {file_path}")
+            
+            # 使用兼容性导入方法
+            blender_compat.import_obj_file(file_path)
+            
             instance = bpy.context.selected_objects[0]
             print(bpy.context.selected_objects)
             print(instance_index_)
@@ -239,15 +301,146 @@ class BlenderRenderClass:
     def depth_graph(self, depth_path, segment_path):
         # 启用节点合成功能
         bpy.data.scenes["Scene"].use_nodes = 1
+        
+        # 首先确保启用深度输出
+        scene = bpy.context.scene
+        
+        # 兼容不同版本的视图层访问方式
+        view_layer = None
+        try:
+            # 尝试新版本的方式 (Blender 2.80+)
+            if hasattr(scene, 'view_layers') and hasattr(scene.view_layers, 'active'):
+                view_layer = scene.view_layers.active
+                print("使用新版本视图层访问方式 (view_layers.active)")
+            elif hasattr(scene, 'view_layers') and len(scene.view_layers) > 0:
+                view_layer = scene.view_layers[0]
+                print("使用新版本视图层访问方式 (view_layers[0])")
+            # 尝试旧版本的方式 (Blender 2.79-)
+            elif hasattr(scene, 'layers'):
+                # 旧版本使用 render layers 而不是 view layers
+                print("检测到旧版本 Blender，使用传统渲染层设置")
+                # 对于旧版本，直接在场景上设置
+                if hasattr(scene.render, 'use_pass_z'):
+                    scene.render.use_pass_z = True
+                    print("已启用深度通道 (scene.render.use_pass_z)")
+                view_layer = None  # 旧版本不需要view_layer
+            else:
+                # 最后的尝试：直接使用当前视图层
+                view_layer = bpy.context.view_layer
+                print("使用当前视图层 (bpy.context.view_layer)")
+        except Exception as e:
+            print(f"获取视图层时出错: {e}")
+            # 备用方案：尝试直接使用上下文
+            try:
+                view_layer = bpy.context.view_layer
+                print("使用备用方案: bpy.context.view_layer")
+            except:
+                print("警告: 无法获取视图层，将跳过深度通道设置")
+                view_layer = None
+        
+        # 启用深度通道 - 这是关键步骤
+        if view_layer is not None:
+            if hasattr(view_layer, 'use_pass_z'):
+                view_layer.use_pass_z = True
+                print("已启用深度通道 (use_pass_z)")
+            
+            # 对于某些Blender版本，可能需要启用其他深度相关设置
+            if hasattr(view_layer, 'use_pass_depth'):
+                view_layer.use_pass_depth = True
+                print("已启用深度通道 (use_pass_depth)")
+        else:
+            print("无法获取视图层，尝试在场景级别设置深度通道")
+            # 尝试在场景级别设置
+            if hasattr(scene.render, 'use_pass_z'):
+                scene.render.use_pass_z = True
+                print("已在场景级别启用深度通道")
 
         # 定义合成节点
-        scene = bpy.context.scene
         nodes = scene.node_tree.nodes
         links = scene.node_tree.links
         for node in nodes:
             nodes.remove(node)
 
         render_layers = nodes.new("CompositorNodeRLayers")
+        
+        # 等待一点时间让深度通道设置生效，然后获取深度输出
+        print("正在获取深度输出...")
+        
+        # 列出所有可用的输出进行调试
+        available_outputs = [output.name for output in render_layers.outputs]
+        print(f"可用的渲染层输出: {available_outputs}")
+        
+        # 使用更安全的方法查找深度输出
+        depth_output = None
+        depth_output_name = None
+        
+        # 尝试多种可能的深度输出名称
+        possible_depth_names = ['Depth', 'Z']
+        
+        for candidate_name in possible_depth_names:
+            print(f"尝试查找深度输出: {candidate_name}")
+            
+            # 检查是否在可用输出列表中
+            if candidate_name in available_outputs:
+                # 通过遍历的方式安全访问
+                for output in render_layers.outputs:
+                    if output.name == candidate_name:
+                        depth_output = output
+                        depth_output_name = candidate_name
+                        print(f"成功找到深度输出: {candidate_name}")
+                        break
+                        
+                if depth_output is not None:
+                    break
+                else:
+                    print(f"虽然 {candidate_name} 在列表中，但无法访问")
+            else:
+                print(f"{candidate_name} 不在可用输出列表中")
+        
+        # 如果标准方法失败，尝试遍历所有输出
+        if depth_output is None:
+            print("标准方法失败，遍历所有输出寻找深度相关的...")
+            for i, output in enumerate(render_layers.outputs):
+                output_name = output.name
+                print(f"检查输出 {i}: '{output_name}'")
+                
+                # 检查是否是深度相关的输出
+                if output_name.lower() in ['depth', 'z'] or 'depth' in output_name.lower():
+                    depth_output = output
+                    depth_output_name = output_name
+                    print(f"找到深度相关输出: {output_name}")
+                    break
+        
+        # 如果还是找不到，这可能意味着需要强制更新渲染层
+        if depth_output is None:
+            print("仍然找不到深度输出，尝试强制更新渲染层...")
+            
+            # 强制更新场景
+            bpy.context.view_layer.update()
+            
+            # 重新创建渲染层节点
+            nodes.remove(render_layers)
+            render_layers = nodes.new("CompositorNodeRLayers")
+            
+            # 再次尝试
+            updated_outputs = [output.name for output in render_layers.outputs]
+            print(f"更新后的输出: {updated_outputs}")
+            
+            for output in render_layers.outputs:
+                if output.name in ['Depth', 'Z']:
+                    depth_output = output
+                    depth_output_name = output.name
+                    print(f"强制更新后找到深度输出: {output.name}")
+                    break
+        
+        # 最终检查
+        if depth_output is None:
+            error_msg = f"无法找到深度输出。可用输出: {available_outputs}。请确保启用了深度通道。"
+            print(f"错误: {error_msg}")
+            raise Exception(error_msg)
+        
+        print(f"最终使用的深度输出: {depth_output_name}")
+        
         divide = nodes.new("CompositorNodeMath")
         divide.operation = "DIVIDE"
         divide.inputs[1].default_value = self.DEPTH_DIVIDE
@@ -274,8 +467,8 @@ class BlenderRenderClass:
         viewer = nodes.new("CompositorNodeViewer")
 
         links.new(render_layers.outputs['Image'], composite.inputs['Image'])
-        links.new(render_layers.outputs['Depth'], less_than.inputs[0])
-        links.new(render_layers.outputs['Depth'], multiply.inputs[0])
+        links.new(depth_output, less_than.inputs[0])  # 使用找到的深度输出
+        links.new(depth_output, multiply.inputs[0])   # 使用找到的深度输出
 
         links.new(less_than.outputs[0], multiply.inputs[1])
         links.new(multiply.outputs[0], divide.inputs[0])

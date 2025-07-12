@@ -8,7 +8,7 @@ class CameraInfo:
             raise FileNotFoundError("Camera info file not found.")
         # 读取yaml文件
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
                 self.camera_info = yaml.load(f, Loader=yaml.FullLoader)
         except yaml.YAMLError as e:
             raise ValueError(f"YAML文件解析失败: {e}\n请检查文件格式是否正确: {file_path}")
@@ -56,3 +56,9 @@ def get_camera_info_from_yaml(file_path):
     :return: CameraInfo对象
     """
     return CameraInfo(file_path)
+
+
+if __name__ == '__main__':
+    file_path = r"D:/Project/DiffusionSuctionDataSetPipeLine/camera_info/camera_info.yaml"
+    camera_info = get_camera_info_from_yaml(file_path)
+    print(camera_info)

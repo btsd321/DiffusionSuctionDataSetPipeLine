@@ -25,9 +25,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "G:/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,99]",
+                "--cycle_list", "[5,99]",
                 "--scene_list", "[1,50]"
-                // "--visualize"
             ]
         },
     ]

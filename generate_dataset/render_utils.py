@@ -1,4 +1,3 @@
-
 # -*- coding:utf-8 -*-
 """
 本文件用于在Blender中批量渲染三维场景, 自动导入物体模型、设置相机与光源参数, 并输出RGB图像、深度图和分割标签图。适用于数据集的自动生成与仿真渲染流程。
@@ -172,6 +171,16 @@ class BlenderRenderClass:
             self.meshScale = [1, 1, 1]
 
     def camera_set(self):
+        # 自动启用NVIDIA GPU加速
+        bpy.context.scene.cycles.device = 'GPU'
+        prefs = bpy.context.preferences.addons['cycles'].preferences
+        prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
+        prefs.get_devices()
+        for device in prefs.devices:
+            if device.type == 'CUDA' or device.type == 'OPTIX':
+                device.use = True
+        print('已启用NVIDIA GPU加速渲染')
+
         # 设置渲染引擎为CYCLES
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
 

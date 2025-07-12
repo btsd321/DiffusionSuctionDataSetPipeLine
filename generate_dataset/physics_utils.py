@@ -1,5 +1,3 @@
-
-
 # -*- coding:utf-8 -*-
 """
 本脚本用于批量生成物理仿真场景, 随机投放多个物体到箱体中, 并保存每个物体的最终位姿到csv文件。适用于数据集物理仿真数据的自动生成流程。
@@ -175,7 +173,9 @@ class GenerateSimulationResult:
                 # 加载物体, 检查是否有物体超出箱体, 如果有则重新投放
                 while (1):
                     flag = 0
+                    # 随机投放物体到箱体中
                     multi_body_objects_first_layer, name_list = self.random_drop_objects_single(self.meshScale, scene_id)
+                    # 检查物体是否超出箱体
                     for sparepart_id in multi_body_objects_first_layer:
                         final_position, angle = pybullet.getBasePositionAndOrientation(sparepart_id)
                         # 检查物体z坐标是否超出箱体高度或低于底部
@@ -186,8 +186,11 @@ class GenerateSimulationResult:
                             pybullet.removeBody(i)
                     if flag == 0:
                         break
+                # 计算当前场景中实际投放的物体数量(即物理仿真后箱体内的物体个数)。
                 foreground_nums = len(multi_body_objects_first_layer)
+                # 生成一个索引列表，内容是 [0, 1, ..., foreground_nums-1]，用于标记每个物体的编号。
                 index_list = [i for i in range(foreground_nums)] 
+                # 断言实际投放的物体数量必须等于当前场景编号 scene_id(即本场景要求的物体数量)。如果不相等，程序会报错，说明仿真结果与预期不符。
                 assert foreground_nums == scene_id
                 
                 if self.show_GUI:
@@ -206,9 +209,35 @@ class GenerateSimulationResult:
         # 保存当前循环和场景的仿真结果到csv文件
         headers = ["Type", "Index", "x", "y", "z", "w", "i", "j", "k"]
         rows = []
-        # 让仿真再运行720步, 确保物体完全静止
-        for _ in range(720):
+        # 自动收敛仿真：如果物体位姿变化很小则提前停止
+        max_steps = 720
+        min_steps = 100  # 最少仿真步数，防止太快结束
+        stable_threshold = 1e-4  # 位置变化阈值（米）
+        stable_rot_threshold = 1e-4  # 四元数变化阈值
+        stable_count_required = 10  # 连续多少步都稳定才提前终止
+        stable_count = 0
+        prev_poses = [pybullet.getBasePositionAndOrientation(mb) for mb in multi_body_list]
+        for step in range(max_steps):
             pybullet.stepSimulation()
+            curr_poses = [pybullet.getBasePositionAndOrientation(mb) for mb in multi_body_list]
+            # 判断所有物体是否都稳定
+            all_stable = True
+            for (prev, curr) in zip(prev_poses, curr_poses):
+                pos_prev, quat_prev = prev
+                pos_curr, quat_curr = curr
+                pos_delta = np.linalg.norm(np.array(pos_prev) - np.array(pos_curr))
+                quat_delta = np.linalg.norm(np.array(quat_prev) - np.array(quat_curr))
+                if pos_delta > stable_threshold or quat_delta > stable_rot_threshold:
+                    all_stable = False
+                    break
+            if all_stable and step > min_steps:
+                stable_count += 1
+            else:
+                stable_count = 0
+            prev_poses = curr_poses
+            if stable_count >= stable_count_required:
+                print(f"提前收敛，仿真步数: {step+101}, 节省了: {max_steps - step - 1} 步")
+                break
         for i, mb in enumerate(multi_body_list):
             final_position, quat = pybullet.getBasePositionAndOrientation(mb)
             # 保存物体名称、索引、位置(x,y,z)、四元数(w,i,j,k)

@@ -26,7 +26,8 @@
             "args": [
                 "--data_dir", "G:/Diffusion_Suction_DataSet",
                 "--cycle_list", "[5,99]",
-                "--scene_list", "[1,50]"
+                "--scene_list", "[1,50]",
+                "--use_gpu"
             ]
         },
     ]

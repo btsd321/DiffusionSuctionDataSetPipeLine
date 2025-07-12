@@ -1,4 +1,3 @@
-
 # -*- coding:utf-8 -*-
 """
 本文件用于在Blender中对单个物体进行批量渲染, 自动导入物体模型、设置相机参数, 并输出分割标签图。适用于数据集单物体分割标签的自动生成与渲染流程。
@@ -8,8 +7,37 @@
 
 """
 import sys
-CYCLE_idx_list = [sys.argv[4]]  # 从命令行参数获取当前循环编号
-SCENE_idx_list = [sys.argv[5]]  # 从命令行参数获取当前场景编号
+import re
+
+def parse_range_or_single(input_str):
+    input_str = input_str.strip()
+    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        return list(range(start, end + 1))
+    list_match = re.match(r'^\{(.+)\}$', input_str)
+    if list_match:
+        values_str = list_match.group(1)
+        return [int(x.strip()) for x in values_str.split(',')]
+    if input_str.isdigit():
+        return [int(input_str)]
+    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
+
+# 命令行参数解析
+parser = argparse.ArgumentParser()
+# 数据集根目录
+parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
+FLAGS = parser.parse_args()
+
+try:
+    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
+    SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
+except ValueError as e:
+    print(f"参数解析错误: {e}")
+    sys.exit(1)
 print("CYCLE_idx_list")
 print(CYCLE_idx_list )
 print("SCENE_idx_list")
@@ -23,12 +51,6 @@ logger.setLevel(logging.WARNING)  # 设置Blender日志等级为WARNING或ERROR,
 import os
 import sys
 import argparse
-
-# 命令行参数解析
-parser = argparse.ArgumentParser()
-# 数据集根目录
-parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
-FLAGS = parser.parse_args()
 
 # 获取数据集根目录
 FILE_DIR = FLAGS.data_dir
@@ -82,6 +104,19 @@ class BlenderRenderClass:
             self.meshScale = [1, 1, 1]
 
     def camera_set(self):
+        if FLAGS.use_gpu:
+            bpy.context.scene.cycles.device = 'GPU'
+            prefs = bpy.context.preferences.addons['cycles'].preferences
+            prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
+            prefs.get_devices()
+            for device in prefs.devices:
+                if device.type == 'CUDA' or device.type == 'OPTIX':
+                    device.use = True
+            print('已启用NVIDIA GPU加速渲染')
+        else:
+            bpy.context.scene.cycles.device = 'CPU'
+            print('已设置为CPU渲染')
+
         # 设置渲染引擎为CYCLES
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
 

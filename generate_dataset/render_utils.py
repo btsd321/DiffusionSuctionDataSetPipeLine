@@ -48,6 +48,8 @@ parser.add_argument('--cycle_list', type=str, required=True,
 # 场景编号  
 parser.add_argument('--scene_list', type=str, required=True, 
                    help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+# 是否启用GPU加速渲染
+parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
 FLAGS = parser.parse_args()
 
 # 解析循环编号和场景编号
@@ -170,16 +172,20 @@ class BlenderRenderClass:
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
+
     def camera_set(self):
-        # 自动启用NVIDIA GPU加速
-        bpy.context.scene.cycles.device = 'GPU'
-        prefs = bpy.context.preferences.addons['cycles'].preferences
-        prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
-        prefs.get_devices()
-        for device in prefs.devices:
-            if device.type == 'CUDA' or device.type == 'OPTIX':
-                device.use = True
-        print('已启用NVIDIA GPU加速渲染')
+        if FLAGS.use_gpu:
+            bpy.context.scene.cycles.device = 'GPU'
+            prefs = bpy.context.preferences.addons['cycles'].preferences
+            prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
+            prefs.get_devices()
+            for device in prefs.devices:
+                if device.type == 'CUDA' or device.type == 'OPTIX':
+                    device.use = True
+            print('已启用NVIDIA GPU加速渲染')
+        else:
+            bpy.context.scene.cycles.device = 'CPU'
+            print('已设置为CPU渲染')
 
         # 设置渲染引擎为CYCLES
         bpy.data.scenes["Scene"].render.engine = "CYCLES"

@@ -85,16 +85,16 @@ class BlenderRenderClass:
         sensor_size =  [11.25, 7.03]  # 相机传感器尺寸, 单位mm
         cam_location_x_y_z = [0, 0, 1.70]  # 相机在三维空间的位置
         cam_rotation_qw_qx_qy_qz =  [0.000000e+00 ,0.000000e+00 ,1.000000e+00 ,6.123234e-17]  # 相机四元数旋转
-        depth_graph_divide =  2    # 深度图缩放因子
-        depth_graph_less = 3       # 深度图阈值
+        # depth_graph_divide =  2    # 深度图缩放因子
+        # depth_graph_less = 3       # 深度图阈值
 
         self.CAMERA_RESOLUTION = resolution
         self.CAMERA_FOCAL_LEN = focal_length
         self.CAMERA_SENSOR_SIZE = sensor_size
         self.CAMERA_LOCATION = cam_location_x_y_z
         self.CAMERA_ROTATION = cam_rotation_qw_qx_qy_qz
-        self.DEPTH_DIVIDE = depth_graph_divide
-        self.DEPTH_LESS = depth_graph_less
+        # self.DEPTH_DIVIDE = depth_graph_divide
+        # self.DEPTH_LESS = depth_graph_less
         # *****Blender 相机参数设置*****
 
         unit_of_obj='mm'

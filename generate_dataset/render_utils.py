@@ -9,6 +9,7 @@ import sys
 import os
 import argparse
 import re
+import gc
 
 def parse_range_or_single(input_str):
     """
@@ -578,8 +579,10 @@ class BlenderRenderClass:
                 self.label_graph(len(obj_name) - 1)  # 配置分割标签材质
                 bpy.ops.render.render()         # 渲染并输出深度图和分割图
                 times.append(time.time()-start_time)
-                
                 print(f"完成渲染 Cycle: {cycle_id:04d}, Scene: {scene_id:03d}, 耗时: {times[-1]:.2f}秒")
+                # 主动清理未使用的数据块和垃圾回收
+                # bpy.ops.outliner.orphans_purge(do_recursive=True)
+                # gc.collect()
                 
         np.save('times.npy', times)
         print(f"总计渲染 {len(times)} 个场景，平均耗时: {np.mean(times):.2f}秒")

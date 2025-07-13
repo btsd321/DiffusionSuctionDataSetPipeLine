@@ -25,7 +25,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "G:/Diffusion_Suction_DataSet",
-                "--cycle_list", "[33,99]",
+                "--cycle_list", "[95,99]",
                 "--scene_list", "[1,50]",
                 "--use_gpu"
             ]

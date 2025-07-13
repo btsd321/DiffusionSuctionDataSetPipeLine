@@ -580,9 +580,9 @@ class BlenderRenderClass:
                 bpy.ops.render.render()         # 渲染并输出深度图和分割图
                 times.append(time.time()-start_time)
                 print(f"完成渲染 Cycle: {cycle_id:04d}, Scene: {scene_id:03d}, 耗时: {times[-1]:.2f}秒")
-                # 主动清理未使用的数据块和垃圾回收
-                # bpy.ops.outliner.orphans_purge(do_recursive=True)
-                # gc.collect()
+                # 主动清理未使用的数据块和垃圾回收, 防止内存不够用
+                bpy.ops.outliner.orphans_purge(do_recursive=True)
+                gc.collect()
                 
         np.save('times.npy', times)
         print(f"总计渲染 {len(times)} 个场景，平均耗时: {np.mean(times):.2f}秒")

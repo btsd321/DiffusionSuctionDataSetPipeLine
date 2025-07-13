@@ -44,7 +44,7 @@ CYCLE_idx_list = range(0, CYCLE_NUM)         # 100个循环
 SCENE_idx_list = range(1, SCENE_NUM+1)          # 每个循环50个场景
 
 # 分割图像的存储路径
-OUTDIR_dir_segment_images_sigle =  os.path.join(FILE_DIR, 'segment_images_sigle')  # 单物体分割图像
+OUTDIR_dir_segment_images_single =  os.path.join(FILE_DIR, 'segment_images_single')  # 单物体分割图像
 OUTDIR_dir_segment_images =  os.path.join(FILE_DIR, 'segment_images')              # 多物体分割图像
 
 # 单个物体面积比例保存路径
@@ -76,7 +76,7 @@ def render_scenes():
                 # 读取当前物体的单独分割图像
                 image_id = cv2.imread(
                     os.path.join(
-                        OUTDIR_dir_segment_images_sigle,
+                        OUTDIR_dir_segment_images_single,
                         'cycle_{:0>4}'.format(cycle_id),
                         "{:0>3}".format(scene_id),
                         "{:0>3}".format(scene_id) + "_{:0>3}".format(i),

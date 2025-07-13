@@ -9,6 +9,7 @@
 import sys
 import re
 import argparse
+import gc
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()
@@ -94,13 +95,13 @@ class BlenderVersionCompat:
         try:
             if hasattr(bpy.ops.wm, 'obj_import'):
                 bpy.ops.wm.obj_import(filepath=filepath)
-                print("使用新版本 OBJ 导入 API (3.0+)")
+                # print("使用新版本 OBJ 导入 API (3.0+)")
             elif hasattr(bpy.ops, 'import_scene') and hasattr(bpy.ops.import_scene, 'obj'):
                 bpy.ops.import_scene.obj(filepath=filepath)
-                print("使用中版本 OBJ 导入 API (2.80-2.93)")
+                # print("使用中版本 OBJ 导入 API (2.80-2.93)")
             else:
                 bpy.ops.import_scene.obj(filepath=filepath)
-                print("使用旧版本 OBJ 导入 API (2.79-)")
+                # print("使用旧版本 OBJ 导入 API (2.79-)")
         except Exception as e:
             print(f"OBJ 导入失败，尝试其他方法: {e}")
             try:
@@ -295,12 +296,13 @@ class BlenderRenderClass:
                 if not 'mymat' in obj.data.materials:
                     obj.data.materials.append(mymat)
 
-    def render_scenes(self):        
+    def render_scenes(self):      
+        self.camera_set()  # 设置相机参数  
         for cycle_id in CYCLE_idx_list:
 
             for scene_id in SCENE_idx_list:
-                print( 'cycle_id={}'.format(cycle_id)+'scene_id={}'.format(scene_id))
-                self.camera_set()  # 设置相机参数
+                print( 'cycle_id={} '.format(cycle_id)+'scene_id={}'.format(scene_id))
+                
                 
                 csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
                 obj_names, pose, segment_indexs = self.read_csv(csv_path)
@@ -321,6 +323,10 @@ class BlenderRenderClass:
                     # 只渲染rgb图, 速度较快
                     self.label_graph(len(obj_name) - 1)
                     bpy.ops.render.render()  # 执行渲染
+                    
+                # 主动清理未使用的数据块和垃圾回收
+                bpy.ops.outliner.orphans_purge(do_recursive=True)
+                gc.collect()
 
 if __name__ == '__main__':
     import time

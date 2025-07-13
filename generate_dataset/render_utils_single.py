@@ -8,6 +8,7 @@
 """
 import sys
 import re
+import argparse
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()
@@ -70,9 +71,49 @@ import math
 # from easydict import EasyDict
 import csv
 
+# Blender 版本兼容性辅助类
+class BlenderVersionCompat:
+    def __init__(self):
+        self.version = bpy.app.version
+        self.is_new_version = self.version >= (2, 80, 0)
+        print(f"检测到 Blender 版本: {self.version[0]}.{self.version[1]}.{self.version[2]}")
+
+    def select_object(self, obj, state=True):
+        if self.is_new_version:
+            obj.select_set(state)
+        else:
+            obj.select = state
+
+    def get_light_type(self):
+        return 'LIGHT' if self.is_new_version else 'LAMP'
+
+    def get_light_add_op(self):
+        return bpy.ops.object.light_add if self.is_new_version else bpy.ops.object.lamp_add
+
+    def import_obj_file(self, filepath):
+        try:
+            if hasattr(bpy.ops.wm, 'obj_import'):
+                bpy.ops.wm.obj_import(filepath=filepath)
+                print("使用新版本 OBJ 导入 API (3.0+)")
+            elif hasattr(bpy.ops, 'import_scene') and hasattr(bpy.ops.import_scene, 'obj'):
+                bpy.ops.import_scene.obj(filepath=filepath)
+                print("使用中版本 OBJ 导入 API (2.80-2.93)")
+            else:
+                bpy.ops.import_scene.obj(filepath=filepath)
+                print("使用旧版本 OBJ 导入 API (2.79-)")
+        except Exception as e:
+            print(f"OBJ 导入失败，尝试其他方法: {e}")
+            try:
+                bpy.ops.wm.obj_import(filepath=filepath)
+            except Exception as final_e:
+                print(f"最终OBJ导入失败: {final_e}")
+
+# 创建全局兼容性对象
+blender_compat = BlenderVersionCompat()
+
 OBJ_PATH =  os.path.join(FILE_DIR, 'OBJ')
 OUTDIR_physics_result_dir =  os.path.join(FILE_DIR, 'physics_result')
-OUTDIR_dir_segment_images =  os.path.join(FILE_DIR, 'segment_images_sigle')
+OUTDIR_dir_segment_images =  os.path.join(FILE_DIR, 'segment_images_single')
 
 if not os.path.exists(OUTDIR_dir_segment_images):
     os.makedirs(OUTDIR_dir_segment_images)
@@ -107,7 +148,7 @@ class BlenderRenderClass:
         if FLAGS.use_gpu:
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
-            prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
+            prefs.compute_device_type = 'CUDA'
             prefs.get_devices()
             for device in prefs.devices:
                 if device.type == 'CUDA' or device.type == 'OPTIX':
@@ -117,34 +158,22 @@ class BlenderRenderClass:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
 
-        # 设置渲染引擎为CYCLES
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
-
-        # 设置相机内参
         bpy.data.scenes["Scene"].render.resolution_x = self.CAMERA_RESOLUTION[0]
         bpy.data.scenes["Scene"].render.resolution_y = self.CAMERA_RESOLUTION[1]
-
         bpy.data.scenes["Scene"].render.resolution_percentage = 100
-
-        # 设置相机焦距和传感器尺寸, 单位为毫米
         bpy.data.cameras["Camera"].type = "PERSP"
         bpy.data.cameras["Camera"].lens = self.CAMERA_FOCAL_LEN
         bpy.data.cameras["Camera"].lens_unit = "MILLIMETERS"
         bpy.data.cameras["Camera"].sensor_width = self.CAMERA_SENSOR_SIZE[0]
         bpy.data.cameras["Camera"].sensor_height = self.CAMERA_SENSOR_SIZE[1]
-        
-        # 传感器适配方式为宽度适配
         bpy.data.cameras["Camera"].sensor_fit = "HORIZONTAL"
-        
-        # 设置像素长宽比
         bpy.data.scenes["Scene"].render.pixel_aspect_x = 1.0
-   
         bpy.data.scenes["Scene"].render.pixel_aspect_y = self.CAMERA_SENSOR_SIZE[1] * self.CAMERA_RESOLUTION[0] / \
                                                          self.CAMERA_RESOLUTION[1] / self.CAMERA_SENSOR_SIZE[0]
         bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
         bpy.data.scenes["Scene"].cycles.aa_samples = 1
         bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
-       
         bpy.data.objects["Camera"].location = [self.CAMERA_LOCATION[0],
                                                self.CAMERA_LOCATION[1],
                                                self.CAMERA_LOCATION[2]]
@@ -153,7 +182,6 @@ class BlenderRenderClass:
                                                           self.CAMERA_ROTATION[1],
                                                           self.CAMERA_ROTATION[2],
                                                           self.CAMERA_ROTATION[3]]
-        # 让相机坐标系绕X轴旋转180度, 适配Blender坐标系
         bpy.data.objects["Camera"].rotation_mode = 'XYZ'
         bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
 
@@ -173,14 +201,14 @@ class BlenderRenderClass:
         # 导入指定物体到Blender场景中, 并设置其位姿
         for o in bpy.data.objects:
             if o.type == 'MESH':
-                o.select = True
+                blender_compat.select_object(o, True)
             else:
-                o.select = False
+                blender_compat.select_object(o, False)
         bpy.ops.object.delete()  # 删除场景中所有网格对象
 
         for instance_index_ in instance_index:
             file_path = os.path.join(OBJ_PATH, obj_name[instance_index_] ,'object.obj')
-            bpy.ops.import_scene.obj(filepath=file_path)
+            blender_compat.import_obj_file(file_path)
             instance = bpy.context.selected_objects[0]
             print(bpy.context.selected_objects)
             print(instance_index_)

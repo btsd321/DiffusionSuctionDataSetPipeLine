@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/generate_dataset/physics_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "G:/Diffusion_Suction_DataSet",
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
                 "--cycle_num", "100",
                 "--scene_num", "50"
                 // "--visualize"
@@ -24,10 +24,48 @@
             "program": "${workspaceFolder}/generate_dataset/render_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "G:/Diffusion_Suction_DataSet",
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "[95,99]",
                 "--scene_list", "[1,50]",
                 "--use_gpu"
+            ]
+        },
+        {
+            "name": "generate_dataset: render_utils_single.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_dataset/render_utils_single.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[1,5]",
+                "--use_gpu"
+            ]
+        },
+        {
+            "name": "generate_dataset: render_utils_single.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_dataset/render_utils_single.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[1,5]",
+                "--use_gpu"
+            ]
+        },
+        {
+            "name": "generate_dataset: individual_object_size.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_dataset/individual_object_size.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[1,5]",
             ]
         },
     ]

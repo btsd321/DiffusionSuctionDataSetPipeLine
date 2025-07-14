@@ -1,5 +1,5 @@
 @echo off
-REM Windows 批处理脚本：运行 generate_dataset/render_utils_single.py
+REM Windows 批处理脚本：运行 generate_dataset/individual_object_size.py
 REM 读取目录并执行 Python 脚本
 
 REM 设置数据集目录

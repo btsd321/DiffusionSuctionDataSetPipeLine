@@ -12,7 +12,7 @@ REM 切换到项目根目录
 cd /d %~dp0..
 
 REM 执行 Python 脚本
-"%~dp0..\diffusion_suction_conda\python.exe" generate_dataset\physics_utils.py --data_dir %DATA_DIR% --cycle_num %CYCLE_NUM% --scene_num %SCENE_NUM%
+"%~dp0..\.conda_env\python.exe" generate_dataset\physics_utils.py --data_dir %DATA_DIR% --cycle_num %CYCLE_NUM% --scene_num %SCENE_NUM%
 
 REM 可选：如需可视化，取消下行注释
 REM "%~dp0..\diffusion_suction_conda\python.exe" generate_dataset\physics_utils.py --data_dir %DATA_DIR% --cycle_num %CYCLE_NUM% --scene_num %SCENE_NUM% --visualize

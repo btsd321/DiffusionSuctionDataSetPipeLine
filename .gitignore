@@ -143,6 +143,7 @@ Data
 *.egg-info
 **/__pycache__/
 
+.conda_env
 blender_python_path.txt
 diffusion_suction_conda
 times.npy

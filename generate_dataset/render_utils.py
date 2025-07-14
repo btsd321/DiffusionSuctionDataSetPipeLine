@@ -1,3 +1,4 @@
+
 # -*- coding:utf-8 -*-
 """
 本文件用于在Blender中批量渲染三维场景, 自动导入物体模型、设置相机与光源参数, 并输出RGB图像、深度图和分割标签图。适用于数据集的自动生成与仿真渲染流程。
@@ -5,8 +6,10 @@
 @checked: Huang Dingtao
 """
 
-import sys
 import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
+from camera_info import CameraInfo
 import argparse
 import re
 import gc
@@ -49,6 +52,7 @@ parser.add_argument('--cycle_list', type=str, required=True,
 # 场景编号  
 parser.add_argument('--scene_list', type=str, required=True, 
                    help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
 # 是否启用GPU加速渲染
 parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
 FLAGS = parser.parse_args()
@@ -78,9 +82,10 @@ import numpy as np
 import shutil
 from math import radians
 import math
-# import yaml
-# from easydict import EasyDict
 import csv
+# 导入相机参数工具
+
+
 
 class BlenderVersionCompat:
     """Blender 版本兼容性辅助类"""
@@ -146,30 +151,30 @@ OUTDIR_dir_rgb_images =  os.path.join(FILE_DIR, 'rgb_images')
 if not os.path.exists(OUTDIR_dir_rgb_images):
     os.makedirs(OUTDIR_dir_rgb_images)
 
+
 class BlenderRenderClass:
-    def __init__(self, ):
-        # *****Blender 相机参数设置*****
-        resolution = [1920, 1200]  # 渲染分辨率
-        focal_length = 16.0        # 相机焦距, 单位mm
-        sensor_size =  [11.25, 7.03]  # 相机传感器尺寸, 单位mm
-        cam_location_x_y_z = [0, 0, 1.70]  # 相机在三维空间的位置
-        # cam_rotation_qw_qx_qy_qz = [0, -0.70710678, -0.70710678, 0] # [90. ,  0. ,180.]
-        cam_rotation_qw_qx_qy_qz = [0.000000e+00 ,0.000000e+00 ,1.000000e+00 ,6.123234e-17]  # [0. ,  0. ,180.]
-        
+    def __init__(self):
+        camera_info_path = FLAGS.camera_info_file
+        if not os.path.isabs(camera_info_path):
+            camera_info_path = os.path.join(os.path.dirname(__file__), '..', 'config', camera_info_path)
+        camera_info_path = os.path.abspath(camera_info_path)
+        print(f"加载相机参数文件: {camera_info_path}")
+        self.cam_info = CameraInfo(camera_info_path)
         depth_graph_divide =  2    # 深度图缩放因子
         depth_graph_less = 3       # 深度图阈值
 
-        self.CAMERA_RESOLUTION = resolution
-        self.CAMERA_FOCAL_LEN = focal_length
-        self.CAMERA_SENSOR_SIZE = sensor_size
-        self.CAMERA_LOCATION = cam_location_x_y_z
-        self.CAMERA_ROTATION = cam_rotation_qw_qx_qy_qz
+        self.CAMERA_FOCAL_LEN = self.cam_info.focal_length
+        self.CAMERA_SENSOR_SIZE = self.cam_info.sensor_size
+        self.CAMERA_LOCATION = self.cam_info.cam_translation_vector
+        self.CAMERA_ROTATION = self.cam_info.cam_quaternions
+        self.img_w = self.cam_info.intrinsic_matrix[0,2] * 2
+        self.img_h = self.cam_info.intrinsic_matrix[1,2] * 2
+        self.CAMERA_RESOLUTION = [int(self.img_w), int(self.img_h)]
         self.DEPTH_DIVIDE = depth_graph_divide
         self.DEPTH_LESS = depth_graph_less
-        # *****Blender 相机参数设置*****
-        unit_of_obj='mm'
+        unit_of_obj = "mm"
         if unit_of_obj == 'mm':
-            self.meshScale = [0.001, 0.001, 0.001]  # 毫米转米
+            self.meshScale = [0.001, 0.001, 0.001]
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
@@ -216,17 +221,18 @@ class BlenderRenderClass:
         bpy.data.scenes["Scene"].cycles.aa_samples = 1
         bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
        
-        bpy.data.objects["Camera"].location = [self.CAMERA_LOCATION[0],
-                                               self.CAMERA_LOCATION[1],
-                                               self.CAMERA_LOCATION[2]]
+        bpy.data.objects["Camera"].location = [self.cam_info.cam_translation_vector[0],
+                                               self.cam_info.cam_translation_vector[1],
+                                               self.cam_info.cam_translation_vector[2]]
         bpy.data.objects["Camera"].rotation_mode = 'QUATERNION'
-        bpy.data.objects["Camera"].rotation_quaternion = [self.CAMERA_ROTATION[0],
-                                                          self.CAMERA_ROTATION[1],
-                                                          self.CAMERA_ROTATION[2],
-                                                          self.CAMERA_ROTATION[3]]
+        # 设置相机的四元数旋转, 注意要把四元数的顺序调整为 [qw, qx, qy, qz]
+        bpy.data.objects["Camera"].rotation_quaternion = [self.cam_info.cam_quaternions[3],
+                                                          self.cam_info.cam_quaternions[0],
+                                                          self.cam_info.cam_quaternions[1],
+                                                          self.cam_info.cam_quaternions[2]]
         # 让相机坐标系绕X轴旋转180度, 适配Blender坐标系
         bpy.data.objects["Camera"].rotation_mode = 'XYZ'
-        bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
+        # bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
 
         # 获取 Blender 版本并设置兼容性参数
         light_type = blender_compat.get_light_type()

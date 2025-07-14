@@ -5,7 +5,7 @@ REM 读取目录并执行 Python 脚本
 REM 设置数据集目录
 set DATA_DIR=G:/Diffusion_Suction_DataSet
 REM 设置循环次数和场景数量
-set CYCLE_LIST="[95,99]"
+set CYCLE_LIST="[0,5]"
 set SCENE_LIST="[1,50]"
 
 REM 切换到项目根目录

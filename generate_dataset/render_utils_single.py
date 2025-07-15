@@ -241,6 +241,7 @@ class BlenderRenderClass:
         # 启用节点合成功能
         bpy.data.scenes["Scene"].use_nodes = 1
 
+        # 定义合成节点
         scene = bpy.context.scene
         nodes = scene.node_tree.nodes
         links = scene.node_tree.links

@@ -17,10 +17,13 @@ import json
 import numpy as np
 import shutil
 from math import radians
-import math
-import yaml
+import matplotlib
+import matplotlib.pyplot as plt
 import OpenEXR
 import Imath
+
+matplotlib.rcParams['font.sans-serif'] = ['SimHei']  # 黑体支持中文
+matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()
@@ -79,7 +82,20 @@ def render_scenes():
                 )
             )
             # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
-            mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
+            # mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
+            # 先将image_ids[:,:, 1]中偏小的值全部置为0.0
+            step = 1 / scene_id
+            mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
+            valid_mask = image_ids[:,:,0] >= 0.5
+            quotient, remainder = np.divmod(image_ids[:,:,1], step)
+            mask_ids_all[valid_mask] = quotient[valid_mask]
+
+            # 可视化
+            # plt.figure()
+            # plt.imshow(mask_ids_all, cmap='tab20')
+            # plt.title(f"mask_ids_all for scene {scene_id}")
+            # plt.colorbar()
+            # plt.show()
 
             areas_id = []  # 存储每个物体的面积比例
             for i in range(scene_id):
@@ -94,20 +110,69 @@ def render_scenes():
                     )
                 )
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
-                mask_id = image_id[:,:, 2] == 1
+                # mask_id = image_id[:,:, 2] = 1
+                # mask_id = (image_id[:,:, 1] >= 0.0) & (image_id[:,:, 0] <= 1 / scene_id + 0.00000001)
+                mask_id = image_id[:,:, 1] <= (step + 0.0000000001)
+
                 # 获取所有物体的掩码中属于当前物体的部分
                 mask_ids = mask_ids_all == i
-                # 只保留当前物体的掩码区域(排除背景或其他物体)
-                mask_ids[image_ids[:,:, 2] != 1] = 0
-                if np.sum(mask_id) != 0:
-                    # 计算当前物体的面积比例 = 多物体分割中该物体像素数 / 单物体分割中该物体像素数
-                    proportion = np.sum(mask_ids) / np.sum(mask_id)
+
+                # 计算物体在多物体场景下暴露在外的像素和
+                exposed_pixels = np.sum(mask_ids)
+
+                # 计算物体在单物体场景下暴露在外的像素和
+                exposed_pixels_single = np.sum(mask_id)
+
+                # 计算交集
+                intersection = np.sum(mask_id & mask_ids)
+
+                if exposed_pixels_single * 1.5 < exposed_pixels:
+                    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+                    axs[0].imshow(mask_id, cmap='gray')
+                    axs[0].set_title(f"mask_id (单物体掩码)")
+                    axs[1].imshow(mask_ids, cmap='gray')
+                    axs[1].set_title(f"mask_ids (多物体分割ID=={i})")
+                    # 叠加显示，两者都为True的像素显示为红色
+                    overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
+                    overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
+                    overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
+                    overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
+                    axs[2].imshow(overlay)
+                    axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids")
+                    for ax in axs:
+                        ax.axis('off')
+                    plt.suptitle(f"scene {scene_id}, object {i}")
+                    plt.tight_layout()
+                    plt.show()
+
+                if exposed_pixels_single == 0:
+                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 跳过面积比例计算")
+                    areas_id.append(0)
+                    raise ValueError(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 无法计算面积比例")
+                else:
+                    proportion = intersection / exposed_pixels_single
                     areas_id.append(proportion)
                     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: {proportion:.4f}")
-                else:
-                    # 若单物体掩码为0, 则面积比例为0
-                    areas_id.append(0)
-                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: 0.0000 (单物体掩码为0)")
+
+                # # 只保留当前物体的掩码区域(排除背景或其他物体)
+                # mask_ids[image_ids[:,:, 2] != 1] = 0
+
+                # mask_only = np.sum(mask_id)
+                # mask_in_scence =  np.sum(mask_ids)
+                # if mask_only != 0:
+                #     # 计算当前物体的面积比例 = 多物体分割中该物体像素数 / 单物体分割中该物体像素数
+                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数: {mask_in_scence}")
+                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数: {mask_only}")
+                #     if mask_in_scence == 0:
+                #         print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数为0, 跳过面积比例计算")
+                #         raise ValueError(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数为0, 无法计算面积比例")
+                #     proportion = np.sum(mask_ids) / np.sum(mask_id)
+                #     areas_id.append(proportion)
+                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: {proportion:.4f}")
+                # else:
+                #     # 若单物体掩码为0, 则面积比例为0
+                #     areas_id.append(0)
+                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: 0.0000 (单物体掩码为0)")
 
             # 构建当前循环和场景的保存路径
             save_path = os.path.join(

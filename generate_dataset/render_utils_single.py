@@ -6,12 +6,23 @@
 @checked: Huang Dingtao
 
 """
+import os
 import sys
-import re
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
+from camera_info import CameraInfo
+import OpenEXR
+import Imath
 import argparse
+import re
 import gc
 
 def parse_range_or_single(input_str):
+    """
+    解析输入字符串，支持以下格式：
+    - 单个值: "5" -> [5]
+    - 区间: "[1,10]" -> [1,2,3,4,5,6,7,8,9,10]
+    - 列表: "{1,3,5}" -> [1,3,5]
+    """
     input_str = input_str.strip()
     range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
     if range_match:
@@ -31,6 +42,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
+# 是否启用GPU加速渲染
 parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
 FLAGS = parser.parse_args()
 
@@ -120,21 +133,23 @@ if not os.path.exists(OUTDIR_dir_segment_images):
     os.makedirs(OUTDIR_dir_segment_images)
 
 class BlenderRenderClass:
-    def __init__(self, ):
-        # *****Blender 相机参数设置*****
-        resolution = [1920, 1200]  # 渲染分辨率
-        focal_length = 16.0        # 相机焦距, 单位mm
-        sensor_size =  [11.25, 7.03]  # 相机传感器尺寸, 单位mm
-        cam_location_x_y_z = [0, 0, 1.70]  # 相机在三维空间的位置
-        cam_rotation_qw_qx_qy_qz =  [0.000000e+00 ,0.000000e+00 ,1.000000e+00 ,6.123234e-17]  # 相机四元数旋转
-        # depth_graph_divide =  2    # 深度图缩放因子
-        # depth_graph_less = 3       # 深度图阈值
+    def __init__(self):
+        camera_info_path = FLAGS.camera_info_file
+        if not os.path.isabs(camera_info_path):
+            camera_info_path = os.path.join(os.path.dirname(__file__), '..', 'config', camera_info_path)
+        camera_info_path = os.path.abspath(camera_info_path)
+        print(f"加载相机参数文件: {camera_info_path}")
+        self.cam_info = CameraInfo(camera_info_path)
+        depth_graph_divide =  2    # 深度图缩放因子
+        depth_graph_less = 3       # 深度图阈值
 
-        self.CAMERA_RESOLUTION = resolution
-        self.CAMERA_FOCAL_LEN = focal_length
-        self.CAMERA_SENSOR_SIZE = sensor_size
-        self.CAMERA_LOCATION = cam_location_x_y_z
-        self.CAMERA_ROTATION = cam_rotation_qw_qx_qy_qz
+        self.CAMERA_FOCAL_LEN = self.cam_info.focal_length
+        self.CAMERA_SENSOR_SIZE = self.cam_info.sensor_size
+        self.CAMERA_LOCATION = self.cam_info.cam_translation_vector
+        self.CAMERA_ROTATION = self.cam_info.cam_quaternions
+        self.img_w = self.cam_info.intrinsic_matrix[0,2] * 2
+        self.img_h = self.cam_info.intrinsic_matrix[1,2] * 2
+        self.CAMERA_RESOLUTION = [int(self.img_w), int(self.img_h)]
         # self.DEPTH_DIVIDE = depth_graph_divide
         # self.DEPTH_LESS = depth_graph_less
         # *****Blender 相机参数设置*****
@@ -145,7 +160,7 @@ class BlenderRenderClass:
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
-    def camera_set(self):
+    def set_device(self):
         if FLAGS.use_gpu:
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
@@ -159,6 +174,7 @@ class BlenderRenderClass:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
 
+    def camera_set(self):
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
         bpy.data.scenes["Scene"].render.resolution_x = self.CAMERA_RESOLUTION[0]
         bpy.data.scenes["Scene"].render.resolution_y = self.CAMERA_RESOLUTION[1]
@@ -175,16 +191,19 @@ class BlenderRenderClass:
         bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
         bpy.data.scenes["Scene"].cycles.aa_samples = 1
         bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
-        bpy.data.objects["Camera"].location = [self.CAMERA_LOCATION[0],
-                                               self.CAMERA_LOCATION[1],
-                                               self.CAMERA_LOCATION[2]]
+       
+        bpy.data.objects["Camera"].location = [self.cam_info.cam_translation_vector[0],
+                                               self.cam_info.cam_translation_vector[1],
+                                               self.cam_info.cam_translation_vector[2]]
         bpy.data.objects["Camera"].rotation_mode = 'QUATERNION'
-        bpy.data.objects["Camera"].rotation_quaternion = [self.CAMERA_ROTATION[0],
-                                                          self.CAMERA_ROTATION[1],
-                                                          self.CAMERA_ROTATION[2],
-                                                          self.CAMERA_ROTATION[3]]
+        # 设置相机的四元数旋转, 注意要把四元数的顺序调整为 [qw, qx, qy, qz]
+        bpy.data.objects["Camera"].rotation_quaternion = [self.cam_info.cam_quaternions[3],
+                                                          self.cam_info.cam_quaternions[0],
+                                                          self.cam_info.cam_quaternions[1],
+                                                          self.cam_info.cam_quaternions[2]]
+        # 让相机坐标系绕X轴旋转180度, 适配Blender坐标系
         bpy.data.objects["Camera"].rotation_mode = 'XYZ'
-        bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
+        # bpy.data.objects["Camera"].rotation_euler[0] = bpy.data.objects["Camera"].rotation_euler[0] + math.pi
 
     def read_csv(self, csv_path):      
         # 读取csv文件, 返回物体名称、位姿、索引
@@ -228,20 +247,21 @@ class BlenderRenderClass:
         scene = bpy.context.scene
         nodes = scene.node_tree.nodes
         links = scene.node_tree.links
-        for node in nodes:
-            nodes.remove(node)
 
-        render_layers = nodes.new("CompositorNodeRLayers")
-
-        # 输出分割图(OPEN_EXR格式, 32位RGB)
-        output_file_label = nodes.new("CompositorNodeOutputFile")
-        output_file_label.base_path = segment_path
-        output_file_label.format.file_format = "OPEN_EXR"
-        output_file_label.format.color_mode = "RGB"
-        output_file_label.format.color_depth = '32'
-
-        # 连接渲染输出到分割图输出节点
-        links.new(render_layers.outputs['Image'], output_file_label.inputs['Image'])
+        # 只在节点数量异常时清空，正常复用已配置节点
+        if len(nodes) < 2 or not any(n.type == 'OUTPUT_FILE' for n in nodes):
+            for node in nodes:
+                nodes.remove(node)
+            render_layers = nodes.new("CompositorNodeRLayers")
+            output_file_label = nodes.new("CompositorNodeOutputFile")
+            output_file_label.base_path = segment_path
+            output_file_label.format.file_format = "OPEN_EXR"
+            output_file_label.format.color_mode = "RGB"
+            output_file_label.format.color_depth = '32'
+            links.new(render_layers.outputs['Image'], output_file_label.inputs['Image'])
+        else:
+            output_file_label = [n for n in nodes if n.type == 'OUTPUT_FILE'][0]
+            output_file_label.base_path = segment_path
 
     # 定义物体的材质(如颜色), 并让所有物体指向同一个材质
     def label_graph(self, label_number):
@@ -259,50 +279,46 @@ class BlenderRenderClass:
             mymat = bpy.data.materials.new('mymat')
             mymat.use_nodes = True
 
-        # 删除初始节点
+        # 优化：仅首次创建材质时清空节点，后续复用已配置节点
         nodes = mymat.node_tree.nodes
         links = mymat.node_tree.links
-        for node in nodes:
-            nodes.remove(node)
-
-        # 配置颜色渐变节点
-        ColorRamp = nodes.new(type="ShaderNodeValToRGB")
-        ColorRamp.color_ramp.interpolation = 'LINEAR'
-        ColorRamp.color_ramp.color_mode = 'RGB'
-
-        ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
-        ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
-
-        # 根据物体数量添加分段
-        ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
-        OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
-        Emission = nodes.new(type="ShaderNodeEmission")
-
-        Math = nodes.new(type="ShaderNodeMath")
-        Math.operation = "DIVIDE"
-        Math.inputs[1].default_value = label_number
-
-        links.new(ObjectInfo.outputs[1], Math.inputs[0])
-        links.new(Math.outputs[0], ColorRamp.inputs[0])
-        links.new(ColorRamp.outputs[0], Emission.inputs[0])
-        links.new(Emission.outputs[0], OutputMat.inputs[0])
+        if len(nodes) < 2 or not any(n.type == 'EMISSION' for n in nodes):
+            for node in nodes:
+                nodes.remove(node)
+            # 配置颜色渐变节点
+            ColorRamp = nodes.new(type="ShaderNodeValToRGB")
+            ColorRamp.color_ramp.interpolation = 'LINEAR'
+            ColorRamp.color_ramp.color_mode = 'RGB'
+            ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
+            ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
+            ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
+            OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
+            Emission = nodes.new(type="ShaderNodeEmission")
+            Math = nodes.new(type="ShaderNodeMath")
+            Math.operation = "DIVIDE"
+            Math.inputs[1].default_value = label_number
+            # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+            links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
+            links.new(Math.outputs[0], ColorRamp.inputs[0])
+            links.new(ColorRamp.outputs[0], Emission.inputs[0])
+            links.new(Emission.outputs[0], OutputMat.inputs[0])
+        else:
+            # 已有节点，直接复用，无需重建
+            pass
 
         # 让所有网格对象都使用同一个材质
         objects = bpy.data.objects
-        count = 0
         for obj in objects:
             if obj.type == 'MESH':
-                count+=1
                 if not 'mymat' in obj.data.materials:
                     obj.data.materials.append(mymat)
 
-    def render_scenes(self):      
+    def render_scenes(self): 
+        self.set_device()     
         self.camera_set()  # 设置相机参数  
         for cycle_id in CYCLE_idx_list:
-
             for scene_id in SCENE_idx_list:
                 print( 'cycle_id={} '.format(cycle_id)+'scene_id={}'.format(scene_id))
-                
                 
                 csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
                 obj_names, pose, segment_indexs = self.read_csv(csv_path)

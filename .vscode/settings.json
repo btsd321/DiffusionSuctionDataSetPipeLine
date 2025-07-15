@@ -1,0 +1,6 @@
+{
+    "python.analysis.extraPaths": [
+        "./config",
+        "./generate_dataset"
+    ]
+}

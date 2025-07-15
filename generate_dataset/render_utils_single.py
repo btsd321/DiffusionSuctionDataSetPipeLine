@@ -145,7 +145,7 @@ class BlenderRenderClass:
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
-    def camera_set(self):
+    def set_device(self):
         if FLAGS.use_gpu:
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
@@ -159,6 +159,7 @@ class BlenderRenderClass:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
 
+    def camera_set(self):
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
         bpy.data.scenes["Scene"].render.resolution_x = self.CAMERA_RESOLUTION[0]
         bpy.data.scenes["Scene"].render.resolution_y = self.CAMERA_RESOLUTION[1]
@@ -302,13 +303,12 @@ class BlenderRenderClass:
                 if not 'mymat' in obj.data.materials:
                     obj.data.materials.append(mymat)
 
-    def render_scenes(self):      
+    def render_scenes(self): 
+        self.set_device()     
         self.camera_set()  # 设置相机参数  
         for cycle_id in CYCLE_idx_list:
-
             for scene_id in SCENE_idx_list:
                 print( 'cycle_id={} '.format(cycle_id)+'scene_id={}'.format(scene_id))
-                
                 
                 csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
                 obj_names, pose, segment_indexs = self.read_csv(csv_path)

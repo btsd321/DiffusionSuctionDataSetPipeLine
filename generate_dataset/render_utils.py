@@ -178,18 +178,6 @@ class BlenderRenderClass:
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
-    def read_exr_to_numpy(self, exr_path):
-        exr_file = OpenEXR.InputFile(exr_path)
-        dw = exr_file.header()['dataWindow']
-        width = dw.max.x - dw.min.x + 1
-        height = dw.max.y - dw.min.y + 1
-        pt = Imath.PixelType(Imath.PixelType.FLOAT)
-        channels = ['R', 'G', 'B']
-        img = np.zeros((height, width, 3), dtype=np.float32)
-        for i, c in enumerate(channels):
-            img[:, :, i] = np.frombuffer(exr_file.channel(c, pt), dtype=np.float32).reshape(height, width)
-        return img
-
     def camera_set(self):
         if FLAGS.use_gpu:
             bpy.context.scene.cycles.device = 'GPU'

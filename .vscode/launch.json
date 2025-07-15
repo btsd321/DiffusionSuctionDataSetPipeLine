@@ -39,20 +39,7 @@
             "args": [
                 "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
-                "--scene_list", "[1,5]",
-                "--use_gpu"
-            ]
-        },
-        {
-            "name": "generate_dataset: render_utils_single.py",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${workspaceFolder}/generate_dataset/render_utils_single.py",
-            "console": "integratedTerminal",
-            "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "0",
-                "--scene_list", "[1,5]",
+                "--scene_list", "[30,35]",
                 "--use_gpu"
             ]
         },
@@ -65,7 +52,7 @@
             "args": [
                 "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
-                "--scene_list", "[1,5]",
+                "--scene_list", "[30,35]",
             ]
         },
     ]

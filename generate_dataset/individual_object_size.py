@@ -11,6 +11,14 @@ import os
 import sys
 import re
 import argparse
+import csv
+import json
+import numpy as np
+import shutil
+from math import radians
+import math
+import yaml
+import cv2
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()
@@ -41,15 +49,6 @@ FILE_DIR = FLAGS.data_dir
 cycle_list = parse_range_or_single(FLAGS.cycle_list)
 scene_list = parse_range_or_single(FLAGS.scene_list)
 
-import csv
-import json
-import numpy as np
-import shutil
-from math import radians
-import math
-import yaml
-import csv
-import imageio.v3 as iio
 
 # 分割图像的存储路径
 OUTDIR_dir_segment_images_single =  os.path.join(FILE_DIR, 'segment_images_single')  # 单物体分割图像
@@ -67,44 +66,31 @@ def render_scenes():
     for cycle_id in cycle_list:
         for scene_id in scene_list:
             # 读取当前循环和场景下的多物体分割图像(EXR格式, 包含ID信息)
-            img_path = os.path.join(
-                OUTDIR_dir_segment_images,
-                'cycle_{:0>4}'.format(cycle_id),
-                "{:0>3}".format(scene_id),
-                'Image0001.exr'
+            image_ids = cv2.imread(
+                os.path.join(
+                    OUTDIR_dir_segment_images,
+                    'cycle_{:0>4}'.format(cycle_id),
+                    "{:0>3}".format(scene_id),
+                    'Image0001.exr'
+                ),
+                cv2.IMREAD_UNCHANGED
             )
-            if not os.path.isfile(img_path):
-                print(f"警告：找不到分割图像文件: {img_path}")
-                continue  # 跳过本循环
-
-            try:
-                image_ids = iio.imread(img_path)
-                if image_ids.ndim == 4 and image_ids.shape[0] == 1:
-                    image_ids = image_ids[0]
-            except Exception as e:
-                print(f"警告：无法读取分割图像文件: {img_path}, 错误: {e}")
-                continue  # 跳过本循环
-
             # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
             mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
 
             areas_id = []  # 存储每个物体的面积比例
             for i in range(scene_id):
                 # 读取当前物体的单独分割图像
-                single_img_path = os.path.join(
-                    OUTDIR_dir_segment_images_single,
-                    'cycle_{:0>4}'.format(cycle_id),
-                    "{:0>3}".format(scene_id),
-                    "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
-                    'Image0001.exr'
+                image_id = cv2.imread(
+                    os.path.join(
+                        OUTDIR_dir_segment_images_single,
+                        'cycle_{:0>4}'.format(cycle_id),
+                        "{:0>3}".format(scene_id),
+                        "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
+                        'Image0001.exr'
+                    ),
+                    cv2.IMREAD_UNCHANGED
                 )
-                try:
-                    image_id = iio.imread(single_img_path)
-                    if image_id.ndim == 4 and image_id.shape[0] == 1:
-                        image_id = image_id[0]
-                except Exception as e:
-                    print(f"警告：无法读取单物体分割图像文件: {single_img_path}, 错误: {e}")
-                    continue
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 mask_id = image_id[:,:, 2] == 1
                 # 获取所有物体的掩码中属于当前物体的部分

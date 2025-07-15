@@ -124,7 +124,7 @@ def render_scenes():
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 # mask_id = image_id[:,:, 2] = 1
                 # mask_id = (image_id[:,:, 1] >= 0.0) & (image_id[:,:, 0] <= 1 / scene_id + 0.00000001)
-                mask_id = image_id[:,:, 1] <= (1 / scene_id + 0.0000000001)
+                mask_id = image_id[:,:, 1] <= (step + 0.0000000001)
 
                 # 获取所有物体的掩码中属于当前物体的部分
                 mask_ids = mask_ids_all == i

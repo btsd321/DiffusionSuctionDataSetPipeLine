@@ -18,7 +18,8 @@ import shutil
 from math import radians
 import math
 import yaml
-import cv2
+import OpenEXR
+import Imath
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()
@@ -59,6 +60,21 @@ individual_object_size =  os.path.join(FILE_DIR, 'individual_object_size')
 if not os.path.exists(individual_object_size):
     os.makedirs(individual_object_size)
 
+def read_exr_to_numpy(filepath):
+    """
+    使用OpenEXR读取EXR文件并转换为numpy数组，假定为3通道float32格式。
+    """
+    exr_file = OpenEXR.InputFile(filepath)
+    header = exr_file.header()
+    dw = header['dataWindow']
+    width = dw.max.x - dw.min.x + 1
+    height = dw.max.y - dw.min.y + 1
+    channels = ['R', 'G', 'B']
+    pt = Imath.PixelType(Imath.PixelType.FLOAT)
+    data = [np.frombuffer(exr_file.channel(c, pt), dtype=np.float32) for c in channels]
+    img = np.stack([d.reshape(height, width) for d in data], axis=-1)
+    return img
+
 def render_scenes():
     """
     遍历所有循环和场景, 计算每个场景中每个物体的单独面积比例, 并保存为csv文件。
@@ -66,14 +82,13 @@ def render_scenes():
     for cycle_id in cycle_list:
         for scene_id in scene_list:
             # 读取当前循环和场景下的多物体分割图像(EXR格式, 包含ID信息)
-            image_ids = cv2.imread(
+            image_ids = read_exr_to_numpy(
                 os.path.join(
                     OUTDIR_dir_segment_images,
                     'cycle_{:0>4}'.format(cycle_id),
                     "{:0>3}".format(scene_id),
                     'Image0001.exr'
-                ),
-                cv2.IMREAD_UNCHANGED
+                )
             )
             # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
             mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
@@ -81,15 +96,14 @@ def render_scenes():
             areas_id = []  # 存储每个物体的面积比例
             for i in range(scene_id):
                 # 读取当前物体的单独分割图像
-                image_id = cv2.imread(
+                image_id = read_exr_to_numpy(
                     os.path.join(
                         OUTDIR_dir_segment_images_single,
                         'cycle_{:0>4}'.format(cycle_id),
                         "{:0>3}".format(scene_id),
                         "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
                         'Image0001.exr'
-                    ),
-                    cv2.IMREAD_UNCHANGED
+                    )
                 )
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 mask_id = image_id[:,:, 2] == 1

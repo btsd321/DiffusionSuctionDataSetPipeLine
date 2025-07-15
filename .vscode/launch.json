@@ -12,9 +12,12 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
-                "--cycle_num", "100",
+                "--cycle_num", "0",
                 "--scene_num", "50"
                 // "--visualize"
+
+
+                
             ]
         },
         {
@@ -25,8 +28,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[95,99]",
-                "--scene_list", "[1,50]",
+                "--cycle_list", "0",
+                "--scene_list", "[30,35]",
                 "--use_gpu"
             ]
         },

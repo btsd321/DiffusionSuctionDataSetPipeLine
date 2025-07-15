@@ -55,7 +55,7 @@
             "args": [
                 "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
-                "--scene_list", "[30,50]",
+                "--scene_list", "[30,35]",
             ]
         },
     ]

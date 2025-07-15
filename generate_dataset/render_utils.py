@@ -9,6 +9,8 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
 from camera_info import CameraInfo
+import OpenEXR
+import Imath
 import argparse
 import re
 import gc
@@ -176,6 +178,17 @@ class BlenderRenderClass:
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
+    def read_exr_to_numpy(self, exr_path):
+        exr_file = OpenEXR.InputFile(exr_path)
+        dw = exr_file.header()['dataWindow']
+        width = dw.max.x - dw.min.x + 1
+        height = dw.max.y - dw.min.y + 1
+        pt = Imath.PixelType(Imath.PixelType.FLOAT)
+        channels = ['R', 'G', 'B']
+        img = np.zeros((height, width, 3), dtype=np.float32)
+        for i, c in enumerate(channels):
+            img[:, :, i] = np.frombuffer(exr_file.channel(c, pt), dtype=np.float32).reshape(height, width)
+        return img
 
     def camera_set(self):
         if FLAGS.use_gpu:
@@ -548,8 +561,13 @@ class BlenderRenderClass:
         Math.operation = "DIVIDE"
         Math.inputs[1].default_value = label_number
 
-        # 连接ObjectInfo的Index输出（outputs[2]）到Math节点，实现分割标签的唯一性
-        links.new(ObjectInfo.outputs[2], Math.inputs[0])  # Index（pass_index）/最大值
+        # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+        # 注意此处的outputs[3]是Object Index（pass_index），可能因Blender版本不同而有所变化
+        # 建议运行前取消下面代码的注释，先打印ObjectInfo.outputs的名称，确认索引是否正确
+        # print("ObjectInfo节点输出顺序：")
+        # for i, out in enumerate(ObjectInfo.outputs):
+        #     print(f"{i}: {out.name}")
+        links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
         # 连接归一化后的Index到ColorRamp，实现分段或渐变颜色映射
         links.new(Math.outputs[0], ColorRamp.inputs[0])
         # 连接ColorRamp输出到Emission，使物体表面显示为分割色
@@ -597,6 +615,7 @@ class BlenderRenderClass:
                 self.label_graph(len(obj_name) - 1)  # 配置分割标签材质
                 bpy.ops.render.render()         # 渲染并输出深度图和分割图
                 times.append(time.time()-start_time)
+
                 print(f"完成渲染 Cycle: {cycle_id:04d}, Scene: {scene_id:03d}, 耗时: {times[-1]:.2f}秒")
                 # 主动清理未使用的数据块和垃圾回收, 防止内存不够用
                 bpy.ops.outliner.orphans_purge(do_recursive=True)
@@ -610,4 +629,6 @@ if __name__ == '__main__':
     
     blender_generator = BlenderRenderClass()
     blender_generator.render_scenes()
+
+    
 

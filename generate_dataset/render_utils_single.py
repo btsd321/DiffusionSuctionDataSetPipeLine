@@ -282,7 +282,13 @@ class BlenderRenderClass:
         Math.operation = "DIVIDE"
         Math.inputs[1].default_value = label_number
 
-        links.new(ObjectInfo.outputs[1], Math.inputs[0])
+        # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+        # 注意此处的outputs[3]是Object Index（pass_index），可能因Blender版本不同而有所变化
+        # 建议运行前取消下面代码的注释，先打印ObjectInfo.outputs的名称，确认索引是否正确
+        # print("ObjectInfo节点输出顺序：")
+        # for i, out in enumerate(ObjectInfo.outputs):
+        #     print(f"{i}: {out.name}")
+        links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
         links.new(Math.outputs[0], ColorRamp.inputs[0])
         links.new(ColorRamp.outputs[0], Emission.inputs[0])
         links.new(Emission.outputs[0], OutputMat.inputs[0])

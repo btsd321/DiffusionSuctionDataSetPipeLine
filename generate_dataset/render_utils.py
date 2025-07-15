@@ -172,17 +172,17 @@ class BlenderRenderClass:
         self.CAMERA_RESOLUTION = [int(self.img_w), int(self.img_h)]
         self.DEPTH_DIVIDE = depth_graph_divide
         self.DEPTH_LESS = depth_graph_less
-        unit_of_obj = "mm"
+        unit_of_obj = 'mm'
         if unit_of_obj == 'mm':
             self.meshScale = [0.001, 0.001, 0.001]  # 毫米转米
         elif unit_of_obj == 'm':
             self.meshScale = [1, 1, 1]
 
-    def camera_set(self):
+    def set_device(self):
         if FLAGS.use_gpu:
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
-            prefs.compute_device_type = 'CUDA'  # 如果支持OPTIX可改为'OPTIX'
+            prefs.compute_device_type = 'CUDA'
             prefs.get_devices()
             for device in prefs.devices:
                 if device.type == 'CUDA' or device.type == 'OPTIX':
@@ -192,6 +192,7 @@ class BlenderRenderClass:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
 
+    def camera_set(self):
         # 设置渲染引擎为CYCLES
         bpy.data.scenes["Scene"].render.engine = "CYCLES"
 
@@ -574,10 +575,11 @@ class BlenderRenderClass:
 
     def render_scenes(self):
         times = []     
+        self.set_device()  # 设置渲染设备为GPU或CPU
+        self.camera_set()  # 设置相机和光源
         for cycle_id in CYCLE_idx_list:
             for scene_id in SCENE_idx_list:
                 start_time = time.time()  # 记录起始时间戳
-                self.camera_set()  # 设置相机和光源
                 # 获取物体名称列表和位姿数组(x, y, z, qw, qx, qy, qz)
         
                 csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))

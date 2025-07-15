@@ -10,6 +10,8 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
 from camera_info import CameraInfo
+import OpenEXR
+import Imath
 import argparse
 import re
 import gc
@@ -116,15 +118,15 @@ class BlenderVersionCompat:
             # 尝试新版本的导入方式 (Blender 3.0+)
             if hasattr(bpy.ops.wm, 'obj_import'):
                 bpy.ops.wm.obj_import(filepath=filepath)
-                print("使用新版本 OBJ 导入 API (3.0+)")
+                #print("使用新版本 OBJ 导入 API (3.0+)")
             # 尝试中等版本的导入方式 (Blender 2.80-2.93)
             elif hasattr(bpy.ops, 'import_scene') and hasattr(bpy.ops.import_scene, 'obj'):
                 bpy.ops.import_scene.obj(filepath=filepath)
-                print("使用中版本 OBJ 导入 API (2.80-2.93)")
+                #print("使用中版本 OBJ 导入 API (2.80-2.93)")
             # 旧版本的导入方式 (Blender 2.79-)
             else:
                 bpy.ops.import_scene.obj(filepath=filepath)
-                print("使用旧版本 OBJ 导入 API (2.79-)")
+                #print("使用旧版本 OBJ 导入 API (2.79-)")
         except Exception as e:
             print(f"OBJ 导入失败，尝试其他方法: {e}")
             # 备用方法：如果上述都失败，尝试直接调用
@@ -291,13 +293,19 @@ class BlenderRenderClass:
             # 使用兼容性导入方法
             blender_compat.import_obj_file(file_path)
             
+            # 获取刚导入的物体对象（假定每次只导入一个物体，且为选中状态）
             instance = bpy.context.selected_objects[0]
-            print(bpy.context.selected_objects)
-            print(instance_index_)
+            print(bpy.context.selected_objects)  # 打印当前选中的物体列表，便于调试
+            print(instance_index_)  # 打印当前物体的分割索引，便于调试
+            # 设置物体的 pass_index，用于后续分割图中唯一标识（ObjectInfo节点会用到）
             instance.pass_index = instance_index_
-            instance.scale = [0.001, 0.001, 0.001]  # 设置缩放(毫米转米)
+            # 设置物体的缩放比例（毫米转米，Blender内部单位为米）
+            instance.scale = [0.001, 0.001, 0.001]
+            # 设置物体的位置（x, y, z），从 csv pose 数据读取
             instance.location = [pose[instance_index_][0], pose[instance_index_][1], pose[instance_index_][2]]
+            # 设置物体的旋转模式为四元数，便于精确控制三维旋转
             instance.rotation_mode = 'QUATERNION'
+            # 设置物体的四元数旋转（qw, qx, qy, qz），从 csv pose 数据读取
             instance.rotation_quaternion = [pose[instance_index_][3], pose[instance_index_][4], pose[instance_index_][5], pose[instance_index_][6]]
 
     def grb_graph(self, rgb_scene_path):
@@ -540,9 +548,18 @@ class BlenderRenderClass:
         Math.operation = "DIVIDE"
         Math.inputs[1].default_value = label_number
 
-        links.new(ObjectInfo.outputs[1], Math.inputs[0])
+        # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+        # 注意此处的outputs[3]是Object Index（pass_index），可能因Blender版本不同而有所变化
+        # 建议运行前取消下面代码的注释，先打印ObjectInfo.outputs的名称，确认索引是否正确
+        # print("ObjectInfo节点输出顺序：")
+        # for i, out in enumerate(ObjectInfo.outputs):
+        #     print(f"{i}: {out.name}")
+        links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
+        # 连接归一化后的Index到ColorRamp，实现分段或渐变颜色映射
         links.new(Math.outputs[0], ColorRamp.inputs[0])
+        # 连接ColorRamp输出到Emission，使物体表面显示为分割色
         links.new(ColorRamp.outputs[0], Emission.inputs[0])
+        # 连接Emission到材质输出，最终决定物体表面颜色
         links.new(Emission.outputs[0], OutputMat.inputs[0])
 
         # 让所有网格对象都使用同一个材质

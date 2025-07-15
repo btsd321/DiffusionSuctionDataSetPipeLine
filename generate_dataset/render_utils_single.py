@@ -225,24 +225,24 @@ class BlenderRenderClass:
         # 启用节点合成功能
         bpy.data.scenes["Scene"].use_nodes = 1
 
-        # 定义合成节点
         scene = bpy.context.scene
         nodes = scene.node_tree.nodes
         links = scene.node_tree.links
-        for node in nodes:
-            nodes.remove(node)
 
-        render_layers = nodes.new("CompositorNodeRLayers")
-
-        # 输出分割图(OPEN_EXR格式, 32位RGB)
-        output_file_label = nodes.new("CompositorNodeOutputFile")
-        output_file_label.base_path = segment_path
-        output_file_label.format.file_format = "OPEN_EXR"
-        output_file_label.format.color_mode = "RGB"
-        output_file_label.format.color_depth = '32'
-
-        # 连接渲染输出到分割图输出节点
-        links.new(render_layers.outputs['Image'], output_file_label.inputs['Image'])
+        # 只在节点数量异常时清空，正常复用已配置节点
+        if len(nodes) < 2 or not any(n.type == 'OUTPUT_FILE' for n in nodes):
+            for node in nodes:
+                nodes.remove(node)
+            render_layers = nodes.new("CompositorNodeRLayers")
+            output_file_label = nodes.new("CompositorNodeOutputFile")
+            output_file_label.base_path = segment_path
+            output_file_label.format.file_format = "OPEN_EXR"
+            output_file_label.format.color_mode = "RGB"
+            output_file_label.format.color_depth = '32'
+            links.new(render_layers.outputs['Image'], output_file_label.inputs['Image'])
+        else:
+            output_file_label = [n for n in nodes if n.type == 'OUTPUT_FILE'][0]
+            output_file_label.base_path = segment_path
 
     # 定义物体的材质(如颜色), 并让所有物体指向同一个材质
     def label_graph(self, label_number):
@@ -260,39 +260,32 @@ class BlenderRenderClass:
             mymat = bpy.data.materials.new('mymat')
             mymat.use_nodes = True
 
-        # 删除初始节点
+        # 优化：仅首次创建材质时清空节点，后续复用已配置节点
         nodes = mymat.node_tree.nodes
         links = mymat.node_tree.links
-        for node in nodes:
-            nodes.remove(node)
-
-        # 配置颜色渐变节点
-        ColorRamp = nodes.new(type="ShaderNodeValToRGB")
-        ColorRamp.color_ramp.interpolation = 'LINEAR'
-        ColorRamp.color_ramp.color_mode = 'RGB'
-
-        ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
-        ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
-
-        # 根据物体数量添加分段
-        ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
-        OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
-        Emission = nodes.new(type="ShaderNodeEmission")
-
-        Math = nodes.new(type="ShaderNodeMath")
-        Math.operation = "DIVIDE"
-        Math.inputs[1].default_value = label_number
-
-        # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
-        # 注意此处的outputs[3]是Object Index（pass_index），可能因Blender版本不同而有所变化
-        # 建议运行前取消下面代码的注释，先打印ObjectInfo.outputs的名称，确认索引是否正确
-        # print("ObjectInfo节点输出顺序：")
-        # for i, out in enumerate(ObjectInfo.outputs):
-        #     print(f"{i}: {out.name}")
-        links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
-        links.new(Math.outputs[0], ColorRamp.inputs[0])
-        links.new(ColorRamp.outputs[0], Emission.inputs[0])
-        links.new(Emission.outputs[0], OutputMat.inputs[0])
+        if len(nodes) < 2 or not any(n.type == 'EMISSION' for n in nodes):
+            for node in nodes:
+                nodes.remove(node)
+            # 配置颜色渐变节点
+            ColorRamp = nodes.new(type="ShaderNodeValToRGB")
+            ColorRamp.color_ramp.interpolation = 'LINEAR'
+            ColorRamp.color_ramp.color_mode = 'RGB'
+            ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
+            ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
+            ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
+            OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
+            Emission = nodes.new(type="ShaderNodeEmission")
+            Math = nodes.new(type="ShaderNodeMath")
+            Math.operation = "DIVIDE"
+            Math.inputs[1].default_value = label_number
+            # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+            links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
+            links.new(Math.outputs[0], ColorRamp.inputs[0])
+            links.new(ColorRamp.outputs[0], Emission.inputs[0])
+            links.new(Emission.outputs[0], OutputMat.inputs[0])
+        else:
+            # 已有节点，直接复用，无需重建
+            pass
 
         # 让所有网格对象都使用同一个材质
         objects = bpy.data.objects

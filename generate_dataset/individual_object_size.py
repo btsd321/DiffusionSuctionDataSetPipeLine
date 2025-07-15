@@ -1,4 +1,3 @@
-
 # -*- coding:utf-8 -*-
 """
 本脚本用于计算每个场景中每个物体的单独面积比例, 并将结果保存为csv文件。
@@ -24,6 +23,21 @@ import Imath
 
 matplotlib.rcParams['font.sans-serif'] = ['SimHei']  # 黑体支持中文
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
+
+def read_exr_to_numpy(filepath):
+    """
+    使用OpenEXR读取EXR文件并转换为numpy数组，假定为3通道float32格式。
+    """
+    exr_file = OpenEXR.InputFile(filepath)
+    header = exr_file.header()
+    dw = header['dataWindow']
+    width = dw.max.x - dw.min.x + 1
+    height = dw.max.y - dw.min.y + 1
+    channels = ['R', 'G', 'B']
+    pt = Imath.PixelType(Imath.PixelType.FLOAT)
+    data = [np.frombuffer(exr_file.channel(c, pt), dtype=np.float32) for c in channels]
+    img = np.stack([d.reshape(height, width) for d in data], axis=-1)
+    return img
 
 def parse_range_or_single(input_str):
     input_str = input_str.strip()

@@ -540,10 +540,14 @@ class BlenderRenderClass:
         ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
 
         # 根据物体数量添加分段
+        # 创建ObjectInfo节点，用于获取每个物体的属性（如Index、Random等）
         ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
+        # 创建材质输出节点
         OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
+        # 创建发射材质节点，使物体表面显示为纯色（不受光照影响，适合分割标签）
         Emission = nodes.new(type="ShaderNodeEmission")
 
+        # 创建数学节点，用于将物体的Index归一化到0~1区间
         Math = nodes.new(type="ShaderNodeMath")
         Math.operation = "DIVIDE"
         Math.inputs[1].default_value = label_number

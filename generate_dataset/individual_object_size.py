@@ -10,25 +10,8 @@
 
 import os
 import sys
+import re
 import argparse
-
-# 命令行参数解析
-parser = argparse.ArgumentParser()
-# 数据集根目录
-parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
-# 循环次数
-parser.add_argument('--cycle_num', type=int, default=100, help='循环次数')
-# 场景数量
-parser.add_argument('--scene_num', type=int, default=50, help='场景数量')
-FLAGS = parser.parse_args()
-
-# 获取数据集根目录
-FILE_DIR = FLAGS.data_dir
-# 获取循环次数
-CYCLE_NUM = FLAGS.cycle_num
-# 获取场景数量
-SCENE_NUM = FLAGS.scene_num
-
 import csv
 import json
 import numpy as np
@@ -36,12 +19,38 @@ import shutil
 from math import radians
 import math
 import yaml
-import csv
-import cv2
+import OpenEXR
+import Imath
 
-# 定义循环和场景的索引范围
-CYCLE_idx_list = range(0, CYCLE_NUM)         # 100个循环
-SCENE_idx_list = range(1, SCENE_NUM+1)          # 每个循环50个场景
+def parse_range_or_single(input_str):
+    input_str = input_str.strip()
+    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        return list(range(start, end + 1))
+    list_match = re.match(r'^\{(.+)\}$', input_str)
+    if list_match:
+        values_str = list_match.group(1)
+        return [int(x.strip()) for x in values_str.split(',')]
+    if input_str.isdigit():
+        return [int(input_str)]
+    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
+
+
+# 命令行参数解析
+parser = argparse.ArgumentParser()
+# 数据集根目录
+parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+FLAGS = parser.parse_args()
+
+# 获取数据集根目录
+FILE_DIR = FLAGS.data_dir
+# 获取循环和场景列表
+cycle_list = parse_range_or_single(FLAGS.cycle_list)
+scene_list = parse_range_or_single(FLAGS.scene_list)
+
 
 # 分割图像的存储路径
 OUTDIR_dir_segment_images_single =  os.path.join(FILE_DIR, 'segment_images_single')  # 单物体分割图像
@@ -52,21 +61,22 @@ individual_object_size =  os.path.join(FILE_DIR, 'individual_object_size')
 if not os.path.exists(individual_object_size):
     os.makedirs(individual_object_size)
 
+
+
 def render_scenes():
     """
     遍历所有循环和场景, 计算每个场景中每个物体的单独面积比例, 并保存为csv文件。
     """
-    for cycle_id in CYCLE_idx_list:
-        for scene_id in SCENE_idx_list:
+    for cycle_id in cycle_list:
+        for scene_id in scene_list:
             # 读取当前循环和场景下的多物体分割图像(EXR格式, 包含ID信息)
-            image_ids = cv2.imread(
+            image_ids = read_exr_to_numpy(
                 os.path.join(
                     OUTDIR_dir_segment_images,
                     'cycle_{:0>4}'.format(cycle_id),
                     "{:0>3}".format(scene_id),
                     'Image0001.exr'
-                ),
-                cv2.IMREAD_UNCHANGED
+                )
             )
             # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
             mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
@@ -74,28 +84,30 @@ def render_scenes():
             areas_id = []  # 存储每个物体的面积比例
             for i in range(scene_id):
                 # 读取当前物体的单独分割图像
-                image_id = cv2.imread(
+                image_id = read_exr_to_numpy(
                     os.path.join(
                         OUTDIR_dir_segment_images_single,
                         'cycle_{:0>4}'.format(cycle_id),
                         "{:0>3}".format(scene_id),
                         "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
                         'Image0001.exr'
-                    ),
-                    cv2.IMREAD_UNCHANGED
+                    )
                 )
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 mask_id = image_id[:,:, 2] == 1
                 # 获取所有物体的掩码中属于当前物体的部分
                 mask_ids = mask_ids_all == i
                 # 只保留当前物体的掩码区域(排除背景或其他物体)
-                mask_ids[[image_ids[:,:, 2] != 1]] = 0
+                mask_ids[image_ids[:,:, 2] != 1] = 0
                 if np.sum(mask_id) != 0:
                     # 计算当前物体的面积比例 = 多物体分割中该物体像素数 / 单物体分割中该物体像素数
-                    areas_id.append(np.sum(mask_ids) / np.sum(mask_id))
+                    proportion = np.sum(mask_ids) / np.sum(mask_id)
+                    areas_id.append(proportion)
+                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: {proportion:.4f}")
                 else:
                     # 若单物体掩码为0, 则面积比例为0
                     areas_id.append(0)
+                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: 0.0000 (单物体掩码为0)")
 
             # 构建当前循环和场景的保存路径
             save_path = os.path.join(

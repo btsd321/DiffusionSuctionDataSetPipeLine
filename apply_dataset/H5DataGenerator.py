@@ -1,48 +1,115 @@
+"""
+本文件实现了机器人吸取任务的H5数据集生成器，是整个数据处理管道的核心组件。
+
+主要功能：
+1. 多模态数据融合：整合深度图像、分割图像、物体位姿真值、尺寸标签等数据
+2. 点云生成与处理：从深度图像重建3D点云，进行采样和标准化
+3. 法向量估计：使用Open3D计算点云表面法向量，并统一朝向
+4. 多维度评分计算：
+   - 密封评分(seal scores)：基于预训练模型和KNN算法
+   - 抗扭评分(wrench scores)：考虑重力方向和吸盘姿态的物理建模
+   - 可行性评分(feasibility scores)：基于几何碰撞检测
+   - 尺寸评分：物体可见面积比例
+
+核心算法：
+- 深度图到点云的投影变换（相机内参标定）
+- 最远点采样(FPS)进行点云下采样
+- KDTree半径搜索进行法向量估计
+- KNN最近邻查找进行密封评分插值
+- 物理建模计算重力影响下的抗扭矩评分
+- 几何碰撞检测评估吸取可行性
+
+数据流程：
+输入 → 点云重建 → 法向量估计 → 多维评分计算 → 可视化验证 → H5格式输出
+
+应用场景：
+- 机器人吸取任务的深度学习训练数据生成
+- 多模态感知数据的标准化处理
+- 物理约束下的抓取质量评估
+
+@author: 数据处理管道核心模块
+@version: 1.0
+"""
+
 import os
 import sys
+# 获取项目目录结构
 FILE_PATH = os.path.abspath(__file__)
 FILE_DIR_generate_dataset = os.path.dirname(FILE_PATH)
 FILE_DIR = os.path.dirname(FILE_DIR_generate_dataset)
-OBJ_PATH =  os.path.join(FILE_DIR, 'OBJ')
+OBJ_PATH = os.path.join(FILE_DIR, 'OBJ')  # 3D物体模型路径
 
-import json
-import math
-import numpy as np
-import cv2
-import os
-import time
-import torch
-import open3d as o3d
-from torch_cluster import knn
+# 导入必要的库
+import json          # JSON配置文件解析
+import math          # 数学运算
+import numpy as np   # 数值计算
+import cv2           # 图像处理
+import os            # 操作系统接口
+import time          # 时间测量
+import torch         # 深度学习框架
+import open3d as o3d # 3D点云处理
+from torch_cluster import knn  # KNN最近邻搜索
 
-# from tf_ops.sampling.tf_sampling import gather_point, farthest_point_sample
+# PointNet2操作库，用于点云采样
 from pointnet2_ops_lib.pointnet2_ops.pointnet2_utils import furthest_point_sample
-import open3d as o3d
-import h5py
-import time
-import csv
-import random
+import open3d as o3d  # 3D几何处理
+import h5py          # HDF5文件格式处理
+import time          # 性能测量
+import csv           # CSV文件处理
+import random        # 随机数生成
 
 def viewpoint_to_matrix_x(towards):
-    # 根据朝向向量生成以x轴为主的旋转矩阵
+    """
+    根据朝向向量生成以x轴为主的旋转矩阵
+    
+    用于将吸盘的朝向向量转换为3x3旋转矩阵，其中x轴为主方向。
+    主要用于碰撞检测中的坐标系变换。
+    
+    参数:
+        towards (numpy.ndarray): 朝向向量，形状为(3,)
+    
+    返回:
+        numpy.ndarray: 3x3旋转矩阵
+    """
+    # 设置x轴为朝向方向
     axis_x = towards
+    # 构造y轴，垂直于x轴在水平面内
     axis_y = np.array([-axis_x[1], axis_x[0], 0])
+    # 标准化x轴和y轴
     axis_x = axis_x / np.linalg.norm(axis_x)
     axis_y = axis_y / np.linalg.norm(axis_y)
+    # 通过叉积计算z轴
     axis_z = np.cross(axis_x, axis_y)
+    # 组合成旋转矩阵
     R2 = np.c_[axis_x, np.c_[axis_y, axis_z]]
     matrix = R2
     return matrix
 
 def viewpoint_to_matrix_z(towards):
-    # 根据朝向向量生成以z轴为主的旋转矩阵
+    """
+    根据朝向向量生成以z轴为主的旋转矩阵
+    
+    用于将法向量转换为3x3旋转矩阵，其中z轴为法向量方向。
+    主要用于抗扭矩计算中的坐标系变换。
+    
+    参数:
+        towards (numpy.ndarray): 法向量，形状为(3,)
+    
+    返回:
+        numpy.ndarray: 3x3旋转矩阵，z轴对齐法向量方向
+    """
     n = towards
+    # 设置z轴为法向量方向
     new_z = n
+    # 构造y轴，垂直于z轴在水平面内
     new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
     new_y = new_y / np.linalg.norm(new_y)
+    # 标准化z轴
     new_z = new_z / np.linalg.norm(new_z)
+    # 通过叉积计算x轴
     new_x = np.cross(new_y, new_z)
     new_x = new_x / np.linalg.norm(new_x)
+    # 扩展维度并组合成旋转矩阵
     new_x = np.expand_dims(new_x, axis=1)
     new_y = np.expand_dims(new_y, axis=1)
     new_z = np.expand_dims(new_z, axis=1)  
@@ -50,184 +117,324 @@ def viewpoint_to_matrix_z(towards):
     return rot_matrix
 
 class H5DataGenerator(object):
-    def __init__(self, params_file_name, target_num_point = 16384):
-        '''
-        初始化数据生成器, 加载相机参数
-        输入参数:
-            params_file_name: 参数文件路径("parameter.json")
-            target_num_point: 采样点的目标数量, 默认16384
-        '''
+    """
+    H5数据集生成器类
+    
+    该类是整个数据处理管道的核心，负责将多模态原始数据转换为
+    标准化的H5格式训练数据集。集成了点云处理、法向量估计、
+    多维度评分计算等功能。
+    """
+    
+    def __init__(self, params_file_name, target_num_point=16384):
+        """
+        初始化数据生成器，加载相机参数和处理配置
+        
+        参数:
+            params_file_name (str): 参数配置文件路径("parameter.json")
+            target_num_point (int): 点云采样的目标点数，默认16384
+                                   这个数量平衡了计算效率和数据质量
+        """
+        # 加载相机内参、深度范围等关键参数
         self.params = self._load_parameters(params_file_name)
+        # 设置点云采样目标数量，确保数据一致性
         self.target_num_point = target_num_point
 
-    def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm = False, xyz_limit=None):
-        '''
-        深度图像像素坐标转点云
-        输入参数:
-            us: u坐标的np数组
-            vs: v坐标的np数组
-            zs: z坐标的np数组
-            to_mm: 若为True则*1000.0, 单位转为毫米
-            xyz_limit: 若为None则xyz无限制。典型格式为[ [xmin, xmax], [ymin, ymax], [zmin, zmax] ]
-        输出:
-            x, y, z
-        '''
-        assert len(us) == len(vs) == len(zs)
+    def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm=False, xyz_limit=None):
+        """
+        将深度图像像素坐标转换为3D点云坐标
+        
+        使用相机内参进行投影变换，从2D像素坐标和深度值重建3D空间坐标。
+        这是整个数据处理管道的基础步骤。
+        
+        参数:
+            us (numpy.ndarray): u坐标数组（像素水平坐标）
+            vs (numpy.ndarray): v坐标数组（像素垂直坐标）  
+            zs (numpy.ndarray): 深度值数组（归一化深度）
+            to_mm (bool): 是否转换为毫米单位，默认False（米单位）
+            xyz_limit (list): 3D空间裁剪范围，格式[[xmin,xmax], [ymin,ymax], [zmin,zmax]]
+                             用于过滤工作空间外的点
+        
+        返回:
+            numpy.ndarray: 3D点云坐标，形状为(N, 3)
+        """
+        assert len(us) == len(vs) == len(zs), "坐标数组长度必须一致"
+        
+        # 从参数配置中获取相机内参
         camera_info = self.params
-        fx = camera_info['fu']
-        fy = camera_info['fv']
-        cx = camera_info['cu']
-        cy = camera_info['cv']
-        clip_start = camera_info['clip_start']
-        clip_end = camera_info['clip_end']
-        # 将深度值归一化到真实距离
+        fx = camera_info['fu']  # x方向焦距
+        fy = camera_info['fv']  # y方向焦距  
+        cx = camera_info['cu']  # x方向主点坐标
+        cy = camera_info['cv']  # y方向主点坐标
+        clip_start = camera_info['clip_start']  # 近裁剪面距离
+        clip_end = camera_info['clip_end']      # 远裁剪面距离
+        
+        # 将归一化深度值转换为真实距离（米）
+        # 深度图中的值通常是归一化的，需要映射到真实距离范围
         Zline = clip_start + (zs/camera_info['max_val_in_depth']) * (clip_end - clip_start)
+        
+        # 考虑透视投影的距离校正
+        # 校正由于透视投影导致的距离失真
         Zcs = Zline/np.sqrt(1+ np.power((us-cx)/fx,2) + np.power((vs-cy)/fy,2))
+        
+        # 可选：转换为毫米单位（某些应用需要）
         if to_mm:
             Zcs *= 1000
+            
+        # 使用针孔相机模型进行3D重建
+        # X = (u - cx) * Z / fx, Y = (v - cy) * Z / fy
         Xcs = (us - cx) * Zcs / fx
         Ycs = (vs - cy) * Zcs / fy
+        
+        # 重塑为列向量并组合成点云
         Xcs = np.reshape(Xcs, (-1, 1))
         Ycs = np.reshape(Ycs, (-1, 1))
         Zcs = np.reshape(Zcs, (-1, 1))
         points = np.concatenate([Xcs, Ycs, Zcs], axis=-1)
-        # 可选：根据xyz范围裁剪点云
+        
+        # 可选：根据xyz范围裁剪点云，去除工作空间外的无关点
         if xyz_limit is not None:
+            # X轴裁剪
             if xyz_limit[0] is not None:
                 xmin, xmax = xyz_limit[0]
                 if xmin is not None:
-                    idx = np.where( points[:, 0]>xmin )
+                    idx = np.where(points[:, 0] > xmin)
                     points = points[idx]
                 if xmax is not None:
-                    idx = np.where( points[:, 0]<xmax )
+                    idx = np.where(points[:, 0] < xmax)
                     points = points[idx]
+            # Y轴裁剪
             if xyz_limit[1] is not None:
                 ymin, ymax = xyz_limit[1]
                 if ymin is not None:
-                    idx = np.where( points[:, 1]>ymin )
+                    idx = np.where(points[:, 1] > ymin)
                     points = points[idx]
                 if ymax is not None:
-                    idx = np.where( points[:, 1]<ymax )
+                    idx = np.where(points[:, 1] < ymax)
                     points = points[idx]
+            # Z轴裁剪
             if xyz_limit[2] is not None:
                 zmin, zmax = xyz_limit[2]
                 if zmin is not None:
-                    idx = np.where( points[:, 2]>zmin )
+                    idx = np.where(points[:, 2] > zmin)
                     points = points[idx]
                 if zmax is not None:
-                    idx = np.where( points[:, 2]<zmax )
+                    idx = np.where(points[:, 2] < zmax)
                     points = points[idx]
+                    
         return points
 
     def _load_parameters(self, params_file_name):
-        '''
-        加载相机参数文件
-        输入参数:
-            params_file_name: 参数文件路径("parameter.json")
+        """
+        加载相机参数和处理配置文件
+        
+        参数:
+            params_file_name (str): JSON配置文件路径
+            
         返回:
-            params: 参数字典
-        '''
+            dict: 包含相机内参、深度范围等配置的字典
+        """
         params = {}
-        with open(params_file_name,'r') as f:
+        with open(params_file_name, 'r') as f:
             config = json.load(f)
             params = config
         return params 
 
     def _read_label_csv(self, file_name):
-        '''
-        读取场景标签csv, 返回平移、旋转、id、名称
-        输入参数:
-            file_name: 真值csv文件路径
-        输出:
-            label_trans: numpy数组, 形状为(num_obj+1)*3, 0号位置为背景
-            label_rot: numpy数组, 形状为(num_obj+1)*9, 0号位置为背景
-            label_vs: numpy数组, 形状为(num_obj+1,), 0号位置为背景
-        '''
-        with open(file_name,'r') as csv_file:  
-            all_lines=csv.reader(csv_file) 
+        """
+        读取场景真值标签CSV文件，获取物体位姿信息
+        
+        解析CSV文件中的物体6D位姿数据（位置+旋转矩阵），
+        这些数据来自物理仿真或标注工具。
+        
+        参数:
+            file_name (str): 真值CSV文件路径
+            
+        返回:
+            tuple: (平移向量, 旋转矩阵, 物体ID, 物体名称)
+                - label_trans: (N, 3) 物体位置坐标
+                - label_rot: (N, 9) 旋转矩阵（展平为9维）
+                - label_id: (N, 1) 物体唯一标识符
+                - label_name: (N,) 物体名称列表
+        """
+        with open(file_name, 'r') as csv_file:  
+            all_lines = csv.reader(csv_file) 
             list_file = [i for i in all_lines]  
-        array_file = np.array(list_file)[1:] # exclude titles
+        
+        # 排除CSV表头，获取数据行
+        array_file = np.array(list_file)[1:]
         num_obj = int(array_file.shape[0])
-        label_trans = array_file[:,2:5].astype('float32')
-        label_rot = array_file[:, 5:14].astype('float32')
-        label_id = array_file[:, 1:2].astype('float32')
-        label_name = array_file[:, 0]
-        return label_trans, label_rot,label_id,label_name
+        
+        # 解析各列数据：位置(3列) + 旋转矩阵(9列) + ID(1列) + 名称(1列)
+        label_trans = array_file[:, 2:5].astype('float32')    # 物体xyz位置
+        label_rot = array_file[:, 5:14].astype('float32')     # 3x3旋转矩阵展平
+        label_id = array_file[:, 1:2].astype('float32')       # 物体编号
+        label_name = array_file[:, 0]                         # 物体名称
+        
+        return label_trans, label_rot, label_id, label_name
 
     def individual_label_csv(self, file_name):
-        # 读取单个物体的标签csv文件, 返回float32类型的数组
-        with open(file_name,'r') as csv_file:  
-            all_lines=csv.reader(csv_file) 
+        """
+        读取单个物体的尺寸标签CSV文件
+        
+        该文件包含每个物体的可见面积比例信息，用于评估
+        吸取任务中物体的暴露程度和可操作性。
+        
+        参数:
+            file_name (str): 物体尺寸标签CSV文件路径
+            
+        返回:
+            numpy.ndarray: 物体尺寸标签数组，数据类型为float32
+        """
+        with open(file_name, 'r') as csv_file:  
+            all_lines = csv.reader(csv_file) 
             list_file = [i for i in all_lines]  
-        array_file = np.array(list_file).astype('float32')   # exclude titles
+        # 直接转换为float32数组，不排除标题行（因为数据文件格式）
+        array_file = np.array(list_file).astype('float32')
         return array_file
 
-    def create_mesh_cylinder(self,radius, height, R, t, collision):
-        # 创建一个圆柱体网格, 并根据输入的旋转矩阵R和平移t进行变换
-        # 如果collision为True, 圆柱体颜色为红色, 否则为绿色
+    def create_mesh_cylinder(self, radius, height, R, t, collision):
+        """
+        创建用于可视化的圆柱体网格
+        
+        生成圆柱体几何体用于可视化吸取点的法向量方向和评分，
+        颜色编码表示吸取质量或碰撞状态。
+        
+        参数:
+            radius (float): 圆柱体半径
+            height (float): 圆柱体高度
+            R (numpy.ndarray): 3x3旋转矩阵，定义圆柱体朝向
+            t (numpy.ndarray): 3D平移向量，定义圆柱体位置
+            collision (float): 碰撞评分，用于颜色编码（0-1范围）
+            
+        返回:
+            open3d.geometry.TriangleMesh: 带颜色的圆柱体网格
+        """
+        # 创建标准圆柱体（底面在原点，向上延伸）
         cylinder = o3d.geometry.TriangleMesh().create_cylinder(radius, height)
         vertices = np.asarray(cylinder.vertices)
+        
+        # 将圆柱体底面移到原点上方，使其以底面中心为旋转原点
         vertices[:, 2] += height / 2
+        
+        # 应用旋转和平移变换
         vertices = np.dot(R, vertices.T).T + t
         cylinder.vertices = o3d.utility.Vector3dVector(vertices)
-        # 颜色编码, collision为1时红色, 否则为0
+        
+        # 根据碰撞评分设置颜色：红色分量表示碰撞程度
         ball_colors = np.zeros((vertices.shape[0], 3), dtype=np.float32)
-        ball_colors[:, 0] = collision
+        ball_colors[:, 0] = collision  # 红色通道，值越大越红
         cylinder.vertex_colors = o3d.utility.Vector3dVector(ball_colors)
+        
         return cylinder
 
-    def process_train_set(self,depth_img, segment_img, gt_file_path, output_file_path,individual_object_size_path,xyz_limit=None):
-        # 处理单个训练样本, 生成点云、法线、吸取分数等并保存为h5
-        start_time = time.time()    # 程序开始时间
-
-        assert depth_img.shape == (self.params['resolutionY'], self.params['resolutionX']) and depth_img.dtype == np.uint16
-        label_trans, label_rot, label_id,label_name = self._read_label_csv(gt_file_path)
-        obj_num = label_trans.shape[0]
-        # 提取深度图中非零像素的坐标和深度
-        xs = np.where(depth_img != 0)[1]
-        ys = np.where(depth_img != 0)[0]
-        zs = depth_img[depth_img != 0]
-        # 将深度图转换为点云
+    def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path, xyz_limit=None):
+        """
+        处理单个训练样本，生成完整的H5数据集
+        
+        这是整个数据处理管道的核心方法，整合多模态输入数据，
+        计算多维度吸取评分，最终生成标准化的训练数据。
+        
+        处理流程：
+        1. 数据预处理：深度图转点云、分割信息提取
+        2. 点云采样：FPS采样到目标点数
+        3. 法向量估计：使用KDTree和半径搜索
+        4. 多维评分计算：
+           - 密封评分：基于预训练模型的KNN插值
+           - 抗扭评分：考虑重力和力矩的物理建模
+           - 可行性评分：几何碰撞检测
+           - 尺寸评分：物体暴露面积比例
+        5. 数据可视化：用于验证和调试
+        6. H5格式保存：标准化输出
+        
+        参数:
+            depth_img (numpy.ndarray): 深度图像，uint16格式
+            segment_img (numpy.ndarray): 分割图像，EXR格式，包含物体ID
+            gt_file_path (str): 真值CSV文件路径
+            output_file_path (str): 输出H5文件路径
+            individual_object_size_path (str): 物体尺寸标签CSV路径
+            xyz_limit (list): 3D空间裁剪范围，可选
+        """
+        start_time = time.time()  # 性能监控起始时间
+        
+        # === 第1步：数据验证和预处理 ===
+        # 验证深度图像格式和尺寸
+        expected_shape = (self.params['resolutionY'], self.params['resolutionX'])
+        assert depth_img.shape == expected_shape and depth_img.dtype == np.uint16, \
+            f"深度图像格式错误：期望{expected_shape}, uint16，实际{depth_img.shape}, {depth_img.dtype}"
+        
+        # 读取真值标签：物体位姿、ID、名称
+        label_trans, label_rot, label_id, label_name = self._read_label_csv(gt_file_path)
+        obj_num = label_trans.shape[0]  # 场景中物体数量
+        
+        # === 第2步：深度图转点云 ===
+        # 提取非零深度像素的坐标（前景点）
+        xs = np.where(depth_img != 0)[1]  # u坐标（水平）
+        ys = np.where(depth_img != 0)[0]  # v坐标（垂直）
+        zs = depth_img[depth_img != 0]    # 深度值
+        
+        # 执行3D重建：像素坐标 + 深度 → 3D点云
         points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False, xyz_limit=xyz_limit)
-        # 获取前景点的物体ID
-        obj_ids = np.round(segment_img[:,:, 1][segment_img[:,:, 2] == 1] * (obj_num - 1)).astype('int')
-
+        
+        # === 第3步：分割信息提取 ===
+        # 从分割图像中提取每个点对应的物体ID
+        # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
+        obj_ids = np.round(segment_img[:, :, 1][segment_img[:, :, 2] == 1] * (obj_num - 1)).astype('int')
+        
+        # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
         if num_pnt == 0:
-            print('No foreground points!!!!!')
+            print('警告：没有前景点，跳过当前场景！')
             return
-        # 若点数不足目标点数, 则复制补齐
+            
+        # 情况1：点数不足，通过重复采样达到目标数量
         if num_pnt <= self.target_num_point:
             t = int(1.0 * self.target_num_point / num_pnt) + 1
-            points_tile = np.tile(points, [t, 1])
+            points_tile = np.tile(points, [t, 1])  # 重复点云
             points = points_tile[:self.target_num_point]
-            obj_ids_tile = np.tile(obj_ids, [t])
+            obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
             obj_ids = obj_ids_tile[:self.target_num_point]
-        # 若点数超出目标点数, 则进行最远点采样
+            
+        # 情况2：点数过多，使用最远点采样(FPS)进行下采样
         if num_pnt > self.target_num_point:
+            # 转换为PyTorch张量并移到GPU（如果可用）
             points_transpose = torch.from_numpy(points.reshape(1, points.shape[0], points.shape[1])).float()
             points_transpose = points_transpose.cuda()
-            sampled_idx =  furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
+            
+            # 执行最远点采样，保持点云的几何分布
+            sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
             points = points[sampled_idx]
             obj_ids = obj_ids[sampled_idx]
 
-        # 读取单个物体的尺寸标签
+        # === 第5步：标签数据对齐 ===
+        # 读取物体尺寸标签（可见面积比例）
         individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
-        # 根据采样点的物体ID, 获取对应的标签
-        label_trans = label_trans[obj_ids]
-        label_rot = label_rot[obj_ids]
-        label_id = label_id[obj_ids]
-        individual_object_size_lable = individual_object_size_lable[obj_ids]
+        
+        # 根据采样后的点云，重新对齐所有标签数据
+        # 确保每个点都有对应的物体位姿、ID和尺寸信息
+        label_trans = label_trans[obj_ids]  # 物体位置对应到每个点
+        label_rot = label_rot[obj_ids]      # 物体旋转对应到每个点
+        label_id = label_id[obj_ids]        # 物体ID对应到每个点
+        individual_object_size_lable = individual_object_size_lable[obj_ids]  # 尺寸标签对应到每个点
 
-        # 构建点云对象
+        # === 第6步：法向量估计 ===
+        # 构建Open3D点云对象用于法向量计算
         pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-        # 法线估计, 使用半径搜索
-        pc_o3d.estimate_normals(o3d.geometry.KDTreeSearchParamRadius(0.015), fast_normal_computation=False)
-        # 法线方向统一指向负Z轴
+        
+        # 使用半径搜索估计每个点的表面法向量
+        # 半径0.015米是经验值，平衡计算精度和效率
+        pc_o3d.estimate_normals(
+            o3d.geometry.KDTreeSearchParamRadius(0.015), 
+            fast_normal_computation=False  # 使用精确计算保证质量
+        )
+        
+        # 统一法向量方向：都指向负Z轴方向（向下）
+        # 这对吸取任务很重要，因为吸盘通常从上往下接近物体
         pc_o3d.orient_normals_to_align_with_direction(np.array([0., 0., -1.]))
-        pc_o3d.normalize_normals()
-        suction_points = points
-        suction_or=np.array(pc_o3d.normals).astype(np.float32)
+        pc_o3d.normalize_normals()  # 标准化为单位向量
+        
+        # 提取处理后的数据
+        suction_points = points  # 吸取候选点
+        suction_or = np.array(pc_o3d.normals).astype(np.float32)  # 对应的法向量
 
         # 法线可视化
         show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))

@@ -96,16 +96,11 @@ def render_scenes():
             # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
             # mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
             # 先将image_ids[:,:, 1]中偏小的值全部置为0.0
-            mask_ids_all = np.ceil(image_ids[:,:, 1] * (scene_id)).astype('int')
-            
-            for i in range(image_ids[:,:, 1].shape[0]):
-                for j in range(image_ids[:,:, 1].shape[1]):
-                    if image_ids[:,:, 0][i, j] >= 0.5:
-                        step = 1 / scene_id
-                        quotient, remainder = divmod(image_ids[:,:, 1][i, j], step)
-                        mask_ids_all[i, j] = quotient
-                    else:
-                        mask_ids_all[i, j] = 255
+            step = 1 / scene_id
+            mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
+            valid_mask = image_ids[:,:,0] >= 0.5
+            quotient, remainder = np.divmod(image_ids[:,:,1], step)
+            mask_ids_all[valid_mask] = quotient[valid_mask]
 
             # 可视化
             # plt.figure()

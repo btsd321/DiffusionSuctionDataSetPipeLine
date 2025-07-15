@@ -43,5 +43,30 @@
                 "--use_gpu"
             ]
         },
+        {
+            "name": "generate_dataset: individual_object_size.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_dataset/individual_object_size.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "G:/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[30,35]",
+            ]
+        },
+        {
+            "name": "generate_dataset: gt_utils.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_dataset/gt_utils.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "G:/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[1,30]",
+                "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
+            ]
+        },
     ]
 }

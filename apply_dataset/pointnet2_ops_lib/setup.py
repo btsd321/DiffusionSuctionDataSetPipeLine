@@ -24,7 +24,7 @@ requirements = ["torch>=1.4"]
 exec(open(osp.join("pointnet2_ops", "_version.py")).read())
 
 # 指定支持的CUDA架构(可根据实际显卡情况调整)
-os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0"
+os.environ["TORCH_CUDA_ARCH_LIST"] = "8.9;8.6"
 
 # 配置并编译pointnet2_ops模块
 setup(

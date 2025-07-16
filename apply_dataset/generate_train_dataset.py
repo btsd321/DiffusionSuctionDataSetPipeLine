@@ -36,6 +36,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
 from camera_info import CameraInfo
 import argparse
 import re
+import OpenEXR
+import Imath
+import numpy as np
     
 # 导入H5数据生成器模块，包含所有数据处理的核心功能
 from H5DataGenerator import *
@@ -96,18 +99,23 @@ OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含O
 GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
 INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
-if __name__ == "__main__":
-    # 设置要处理的数据范围
-    # # 循环编号范围：每个循环代表一组独立的场景数据
-    # CYCLE_idx_list = range(81, 100)  # 处理第81-99个循环（共19个循环）
-    # # 场景编号范围：每个循环内包含的场景数量
-    # SCENE_idx_list = range(1, 51)    # 处理1-50号场景（每个循环50个场景）
+# 用OpenEXR读取EXR分割图像
+def read_exr_to_numpy(filepath):
+    exr_file = OpenEXR.InputFile(filepath)
+    header = exr_file.header()
+    dw = header['dataWindow']
+    width = dw.max.x - dw.min.x + 1
+    height = dw.max.y - dw.min.y + 1
+    channels = ['R', 'G', 'B']
+    pt = Imath.PixelType(Imath.PixelType.FLOAT)
+    data = [np.frombuffer(exr_file.channel(c, pt), dtype=np.float32) for c in channels]
+    img = np.stack([d.reshape(height, width) for d in data], axis=-1)
+    return img
 
-    # --------------------------------------------------------------------------
-    # 调试模式：用于调试法线估计算法时，只处理少量数据以加快测试速度
-    CYCLE_idx_list = FLAGS.cycle_list     # 仅处理第0个循环
-    SCENE_idx_list = FLAGS.scene_list     # 仍处理1-50号场景
-    # --------------------------------------------------------------------------
+if __name__ == "__main__":
+    # 解析循环和场景编号为整数列表
+    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
+    SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
 
     # 创建H5数据生成器实例，加载参数配置
     # 该实例负责将多模态原始数据转换为标准化的H5训练数据
@@ -130,12 +138,15 @@ if __name__ == "__main__":
             depth_image_path = os.path.join(DEPTH_DIR, 'cycle_{:0>4}'.format(cycle_id), 
                                           "{:0>3}".format(scene_id), 'Image0001.png')
             depth_image = cv2.imread(depth_image_path, cv2.IMREAD_UNCHANGED)
+            if depth_image is None:
+                raise ValueError(f"无法读取深度图像文件: {depth_image_path}")
         
             # 2. 构建分割图像文件路径并加载
             # 分割图像包含每个像素对应的物体ID，用于物体识别和分离
             seg_img_path = os.path.join(SEGMENT_DIR, 'cycle_{:0>4}'.format(cycle_id), 
                                        "{:0>3}".format(scene_id), 'Image0001.exr')
-            segment_image = cv2.imread(seg_img_path, cv2.IMREAD_UNCHANGED)
+
+            segment_image = read_exr_to_numpy(seg_img_path)
 
             # 3. 构建真值标签文件路径
             # GT文件包含每个物体在相机坐标系下的6D位姿（位置+旋转）

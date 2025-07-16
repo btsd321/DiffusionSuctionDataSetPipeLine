@@ -53,7 +53,14 @@ import open3d as o3d  # 3D几何处理
 import h5py          # HDF5文件格式处理
 import time          # 性能测量
 import csv           # CSV文件处理
-import random        # 随机数生成
+
+import matplotlib
+from matplotlib.font_manager import FontProperties
+import matplotlib.pyplot as plt
+
+# 可视化设置
+matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
+font = FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
 
 def viewpoint_to_matrix_x(towards):
     """
@@ -389,7 +396,6 @@ class H5DataGenerator(object):
             vis_list.append(ball)
         o3d.visualization.draw_geometries(vis_list, width=800, height=600)
         # 绘制吸取分数直方图
-        import matplotlib.pyplot as plt
         plt.hist(score_seal, bins=100)
         plt.title("Histogram of Data")
         plt.xlabel("Value")
@@ -491,7 +497,19 @@ class H5DataGenerator(object):
             xyz_limit (list): 3D空间裁剪范围，可选
         """
         start_time = time.time()  # 性能监控起始时间
-        
+
+        # # 可视化segment_img三通道并排
+        # fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+        # channel_names = ['Channel 0', 'Channel 1', 'Channel 2']
+        # cmaps = ['gray', 'jet', 'viridis']
+        # for i in range(3):
+        #     im = axs[i].imshow(segment_img[:, :, i], cmap=cmaps[i])
+        #     axs[i].set_title(f"{channel_names[i]}")
+        #     plt.colorbar(im, ax=axs[i])
+        # plt.suptitle("segment_img 三通道并排可视化", fontproperties=font)
+        # plt.tight_layout()
+        # plt.show()
+
         # === 第1步：数据验证和预处理 ===
         # 验证深度图像格式和尺寸
         W = self.cam_info.intrinsic_matrix[0, 2] * 2  # 水平分辨率
@@ -503,26 +521,35 @@ class H5DataGenerator(object):
         # 读取真值标签：物体位姿、ID、名称
         label_trans, label_rot, label_id, label_name = self._read_label_csv(gt_file_path)
         obj_num = label_trans.shape[0]  # 场景中物体数量
+
+        # 计算前景掩码
+        step = 1 / obj_num
+        obj_ids = np.full(segment_img[:, :, 1].shape, 0, dtype=np.float32)
+        valid_mask = segment_img[:, :, 0] > 0.5  # 前景点掩码
         
         # === 第2步：深度图转点云 ===
         # 提取非零深度像素的坐标（前景点）
-        xs = np.where(depth_img != 0)[1]  # u坐标（水平）
-        ys = np.where(depth_img != 0)[0]  # v坐标（垂直）
-        zs = depth_img[depth_img != 0]    # 深度值
+        xs, ys = np.where(valid_mask)
+        zs = depth_img[valid_mask]
         
         # 执行3D重建：像素坐标 + 深度 → 3D点云
         points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False, xyz_limit=xyz_limit)
-        
+
         # === 第3步：分割信息提取 ===
-        # 从分割图像中提取每个点对应的物体ID
-        # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
-        obj_ids = np.round(segment_img[:, :, 1][segment_img[:, :, 2] == 1] * (obj_num - 1)).astype('int')
+        # step = 1 / scene_id
+        # mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
+        # valid_mask = image_ids[:,:,0] >= 0.5
+        # quotient, remainder = np.divmod(image_ids[:,:,1], step)
+        # 根据valid_mask重新计算xs, ys, zs（只处理前景掩码对应的像素）
+
+        quotient, remainder = np.divmod(segment_img[:, :, 1], step)  # 物体ID
+        obj_ids = quotient[valid_mask].astype('int')  # 每个像素对应的物体ID
+        # obj_ids = np.round((segment_img[:, :, 2] * (obj_num - 1))[segment_img[:, :, 0] == 1]).astype('int')
         
         # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
         if num_pnt == 0:
-            print('警告：没有前景点，跳过当前场景！')
-            return
+            raise ValueError('没有前景点，跳过当前场景！')
             
         # 情况1：点数不足，通过重复采样达到目标数量
         if num_pnt <= self.target_num_point:
@@ -531,9 +558,10 @@ class H5DataGenerator(object):
             points = points_tile[:self.target_num_point]
             obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
             obj_ids = obj_ids_tile[:self.target_num_point]
-            
+            valid_mask_tile = np.tile(valid_mask, [t])  # 重复掩码
+            valid_mask = valid_mask_tile[:self.target_num_point]
         # 情况2：点数过多，使用最远点采样(FPS)进行下采样
-        if num_pnt > self.target_num_point:
+        elif num_pnt > self.target_num_point:
             # 转换为PyTorch张量并移到GPU（如果可用）
             points_transpose = torch.from_numpy(points.reshape(1, points.shape[0], points.shape[1])).float()
             points_transpose = points_transpose.cuda()
@@ -542,10 +570,17 @@ class H5DataGenerator(object):
             sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
             points = points[sampled_idx]
             obj_ids = obj_ids[sampled_idx]
+            # 将valid_mask转为1维
+            valid_mask = valid_mask[sampled_idx]  # 保留有效点的掩码
+            valid_mask = valid_mask.reshape(-1)
+        else:
+            pass
 
         # === 第5步：标签数据对齐 ===
         # 读取物体尺寸标签（可见面积比例）
         individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
+        if individual_object_size_lable.size == 0:
+            raise ValueError('尺寸标签文件为空！')
         
         # 根据采样后的点云，重新对齐所有标签数据
         # 确保每个点都有对应的物体位姿、ID和尺寸信息
@@ -597,7 +632,6 @@ class H5DataGenerator(object):
             vis_list.append(ball)
         o3d.visualization.draw_geometries(vis_list, width=800, height=600)
         # 绘制尺寸标签直方图
-        import matplotlib.pyplot as plt
         individual_object_size_lable_temp = individual_object_size_lable*100
         plt.hist(individual_object_size_lable_temp.astype(int), bins=100)
         plt.title("Histogram of Data")
@@ -650,7 +684,6 @@ class H5DataGenerator(object):
             vis_list.append(ball)
         o3d.visualization.draw_geometries(vis_list, width=800,   height=600)
         # 绘制最终分数直方图
-        import matplotlib.pyplot as plt
         plt.hist(score_all, bins=100)
         plt.title("Histogram of Data")
         plt.xlabel("Value")

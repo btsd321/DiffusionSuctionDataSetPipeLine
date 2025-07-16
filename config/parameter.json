@@ -1,14 +1,6 @@
 {
   "name": "sparepart",
-  "resolutionX": 1920,
-  "resolutionY": 1200,
-  "fu": 2730,
-  "fv": 2730,
-  "cu": 960,
-  "cv": 600,
   "clip_start": 0,
   "clip_end": 2,
-  "max_val_in_depth": 65535.0,
-  "location": [0, 0, 1.70],
-  "rotation": [0.000000e+00, 0.000000e+00, 1.000000e+00, 6.123234e-17] 
+  "max_val_in_depth": 65535.0
 }

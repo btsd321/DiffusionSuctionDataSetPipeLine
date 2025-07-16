@@ -53,7 +53,6 @@ import open3d as o3d  # 3D几何处理
 import h5py          # HDF5文件格式处理
 import time          # 性能测量
 import csv           # CSV文件处理
-
 import matplotlib
 from matplotlib.font_manager import FontProperties
 import matplotlib.pyplot as plt
@@ -61,7 +60,6 @@ import matplotlib.pyplot as plt
 # 可视化设置
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 font = FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
-
 def viewpoint_to_matrix_x(towards):
     """
     根据朝向向量生成以x轴为主的旋转矩阵
@@ -344,7 +342,7 @@ class H5DataGenerator(object):
         # 计算吸取点的密封分数
         for index in range(len(label_name)):
             # 读取每个物体的稀疏点和分数
-            annotation = np.load(os.path.join(OBJ_PATH, label_name[index], "labels.npz"))
+            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
             object_sparse_point = annotation['points']
             anno_points = annotation['points']
             anno_scores = annotation['scores']
@@ -397,7 +395,7 @@ class H5DataGenerator(object):
         o3d.visualization.draw_geometries(vis_list, width=800, height=600)
         # 绘制吸取分数直方图
         plt.hist(score_seal, bins=100)
-        plt.title("Histogram of Data")
+        plt.title("Histogram of SealScore")
         plt.xlabel("Value")
         plt.ylabel("Frequency")
         plt.show()
@@ -497,19 +495,7 @@ class H5DataGenerator(object):
             xyz_limit (list): 3D空间裁剪范围，可选
         """
         start_time = time.time()  # 性能监控起始时间
-
-        # # 可视化segment_img三通道并排
-        # fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-        # channel_names = ['Channel 0', 'Channel 1', 'Channel 2']
-        # cmaps = ['gray', 'jet', 'viridis']
-        # for i in range(3):
-        #     im = axs[i].imshow(segment_img[:, :, i], cmap=cmaps[i])
-        #     axs[i].set_title(f"{channel_names[i]}")
-        #     plt.colorbar(im, ax=axs[i])
-        # plt.suptitle("segment_img 三通道并排可视化", fontproperties=font)
-        # plt.tight_layout()
-        # plt.show()
-
+        
         # === 第1步：数据验证和预处理 ===
         # 验证深度图像格式和尺寸
         W = self.cam_info.intrinsic_matrix[0, 2] * 2  # 水平分辨率
@@ -521,7 +507,7 @@ class H5DataGenerator(object):
         # 读取真值标签：物体位姿、ID、名称
         label_trans, label_rot, label_id, label_name = self._read_label_csv(gt_file_path)
         obj_num = label_trans.shape[0]  # 场景中物体数量
-
+        
         # 计算前景掩码
         step = 1 / obj_num
         obj_ids = np.full(segment_img[:, :, 1].shape, 0, dtype=np.float32)
@@ -534,17 +520,12 @@ class H5DataGenerator(object):
         
         # 执行3D重建：像素坐标 + 深度 → 3D点云
         points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False, xyz_limit=xyz_limit)
-
+        
         # === 第3步：分割信息提取 ===
-        # step = 1 / scene_id
-        # mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
-        # valid_mask = image_ids[:,:,0] >= 0.5
-        # quotient, remainder = np.divmod(image_ids[:,:,1], step)
-        # 根据valid_mask重新计算xs, ys, zs（只处理前景掩码对应的像素）
-
+        # 从分割图像中提取每个点对应的物体ID
+        # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
         quotient, remainder = np.divmod(segment_img[:, :, 1], step)  # 物体ID
         obj_ids = quotient[valid_mask].astype('int')  # 每个像素对应的物体ID
-        # obj_ids = np.round((segment_img[:, :, 2] * (obj_num - 1))[segment_img[:, :, 0] == 1]).astype('int')
         
         # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
@@ -557,9 +538,7 @@ class H5DataGenerator(object):
             points_tile = np.tile(points, [t, 1])  # 重复点云
             points = points_tile[:self.target_num_point]
             obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
-            obj_ids = obj_ids_tile[:self.target_num_point]
-            valid_mask_tile = np.tile(valid_mask, [t])  # 重复掩码
-            valid_mask = valid_mask_tile[:self.target_num_point]
+            obj_ids = obj_ids_tile[:self.target_num_point]          
         # 情况2：点数过多，使用最远点采样(FPS)进行下采样
         elif num_pnt > self.target_num_point:
             # 转换为PyTorch张量并移到GPU（如果可用）
@@ -570,9 +549,6 @@ class H5DataGenerator(object):
             sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
             points = points[sampled_idx]
             obj_ids = obj_ids[sampled_idx]
-            # 将valid_mask转为1维
-            valid_mask = valid_mask[sampled_idx]  # 保留有效点的掩码
-            valid_mask = valid_mask.reshape(-1)
         else:
             pass
 
@@ -584,10 +560,37 @@ class H5DataGenerator(object):
         
         # 根据采样后的点云，重新对齐所有标签数据
         # 确保每个点都有对应的物体位姿、ID和尺寸信息
-        label_trans = label_trans[obj_ids]  # 物体位置对应到每个点
-        label_rot = label_rot[obj_ids]      # 物体旋转对应到每个点
-        label_id = label_id[obj_ids]        # 物体ID对应到每个点
-        individual_object_size_lable = individual_object_size_lable[obj_ids]  # 尺寸标签对应到每个点
+        points_label_trans = np.array([])
+        points_label_rot = np.array([])
+        points_label_id = np.array([])
+        if label_trans.shape[0] == 1: # 1维
+            points_label_trans = label_trans[obj_ids]  # 物体位置对应到每个点
+            points_label_rot = label_rot[obj_ids]      # 物体旋转对应到每个点
+            points_label_id = label_id[obj_ids]        # 物体ID对应到每个点
+        # individual_object_size_lable = individual_object_size_lable[obj_ids]  # 尺寸标签对应到每个点
+        else: # 多维，即多个物体
+            # 查找点对应的物体ID，如果label_trans为n*3，则n为物体的id
+            # for i in obj_ids:
+            #     find_flag = False
+            #     for idx, value in enumerate(label_trans[:, 0]):
+            #         print(f"第{idx}个值: {value}")
+            #         if value == i:
+            #             points_label_trans = np.append(points_label_trans, label_trans[idx])
+            #             points_label_rot = np.append(points_label_rot, label_rot[idx])
+            #             points_label_id = np.append(points_label_id, label_id[idx])
+            #             find_flag = True
+            #             break
+            #     if not find_flag:
+            #         raise ValueError("物体ID对应失败！")
+            # 建立物体ID到索引的映射
+            id_to_idx = {int(value): idx for idx, value in enumerate(label_trans[:, 0])}
+
+            # 直接用obj_ids查找对应的标签
+            points_label_trans = np.array([label_trans[id_to_idx[i]] for i in obj_ids])
+            points_label_rot = np.array([label_rot[id_to_idx[i]] for i in obj_ids])
+            points_label_id = np.array([label_id[id_to_idx[i]] for i in obj_ids])
+                    
+                    
 
         # === 第6步：法向量估计 ===
         # 构建Open3D点云对象用于法向量计算
@@ -632,19 +635,20 @@ class H5DataGenerator(object):
             vis_list.append(ball)
         o3d.visualization.draw_geometries(vis_list, width=800, height=600)
         # 绘制尺寸标签直方图
+        import matplotlib.pyplot as plt
         individual_object_size_lable_temp = individual_object_size_lable*100
         plt.hist(individual_object_size_lable_temp.astype(int), bins=100)
-        plt.title("Histogram of Data")
+        plt.title("Histogram of Visibility Score")
         plt.xlabel("Value")
         plt.ylabel("Frequency")
         plt.show()
 
         # 密封评分
-        score_seal = self._cal_score_seal(suction_points, obj_ids, label_trans, label_rot, label_name)
+        score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
         self._score_seel_visiualization(score_seal, suction_points, suction_or)
 
         # 抗扭矩评分
-        score_wrench = self._cal_score_wrench(suction_points, suction_or,  label_trans)
+        score_wrench = self._cal_score_wrench(suction_points, suction_or,  points_label_trans)
 
         # 碰撞评分
         score_collision = self._cal_score_collision(suction_points, suction_or)
@@ -655,11 +659,14 @@ class H5DataGenerator(object):
         # 综合所有分数, 得到最终分数并排序
         score_all = score_seal * score_wrench * score_collision * score_visibility
 
+        # 对 score_all（所有吸取点的综合评分）从大到小排序，得到排序后的索引数组 sorted_indices。
         sorted_indices = np.argsort(score_all)[::-1]
         score_all_asort = score_all[sorted_indices]
         points_asort = points[sorted_indices]
         suction_points_asort = suction_points[sorted_indices]
         suction_or_asort = suction_or[sorted_indices]
+        # 打印最高分及该分数对应的点
+        print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
 
         # 可视化最终排序后的吸取点
         show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points_asort))
@@ -684,8 +691,9 @@ class H5DataGenerator(object):
             vis_list.append(ball)
         o3d.visualization.draw_geometries(vis_list, width=800,   height=600)
         # 绘制最终分数直方图
+        import matplotlib.pyplot as plt
         plt.hist(score_all, bins=100)
-        plt.title("Histogram of Data")
+        plt.title("Histogram of Final Score")
         plt.xlabel("Value")
         plt.ylabel("Frequency")
         plt.show()

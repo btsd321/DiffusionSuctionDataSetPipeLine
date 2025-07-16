@@ -172,6 +172,7 @@ if __name__ == "__main__":
             # 7. 核心处理步骤：调用数据生成器处理当前场景
             # 该函数将整合所有输入数据，生成标准化的H5训练数据集
             # 包括：点云生成、法向量估计、吸取评分计算、数据标准化等
+            data_folder_path = os.path.join(FLAGS.data_dir)
             g.process_train_set(depth_image, segment_image, gt_file_path, 
                               output_h5_path, individual_object_size_path)
             

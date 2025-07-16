@@ -6,22 +6,22 @@ from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 # 获取当前文件所在目录
-this_dir = osp.dirname(osp.abspath(__file__))
+this_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 指定C++/CUDA扩展源码目录
-_ext_src_root = osp.join("pointnet2_ops", "_ext-src")
+_ext_src_root = os.path.join("pointnet2_ops", "_ext-src")
 # 搜索所有.cpp和.cu源文件
-_ext_sources = glob.glob(osp.join(_ext_src_root, "src", "*.cpp")) + glob.glob(
-    osp.join(_ext_src_root, "src", "*.cu")
+_ext_sources = glob.glob(os.path.join(_ext_src_root, "src", "*.cpp")) + glob.glob(
+    os.path.join(_ext_src_root, "src", "*.cu")
 )
 # 搜索所有头文件
-_ext_headers = glob.glob(osp.join(_ext_src_root, "include", "*"))
+_ext_headers = glob.glob(os.path.join(_ext_src_root, "include", "*"))
 
 # 指定依赖的PyTorch版本
 requirements = ["torch>=1.4"]
 
 # 读取版本号(从pointnet2_ops/_version.py文件中)
-exec(open(osp.join("pointnet2_ops", "_version.py")).read())
+exec(open(os.path.join("pointnet2_ops", "_version.py")).read())
 
 # 指定支持的CUDA架构(可根据实际显卡情况调整)
 os.environ["TORCH_CUDA_ARCH_LIST"] = "8.9;8.6"
@@ -41,7 +41,7 @@ setup(
                 "cxx": ["-O3"],  # C++编译优化选项
                 "nvcc": ["-O3", "-Xfatbin", "-compress-all"],  # CUDA编译优化选项
             },
-            include_dirs=[osp.join(this_dir, _ext_src_root, "include")],  # 头文件目录
+            include_dirs=[os.path.join(this_dir, _ext_src_root, "include")],  # 头文件目录
         )
     ],
     cmdclass={"build_ext": BuildExtension},  # 使用PyTorch的BuildExtension进行编译

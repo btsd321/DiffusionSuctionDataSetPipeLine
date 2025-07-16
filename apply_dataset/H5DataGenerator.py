@@ -326,29 +326,131 @@ class H5DataGenerator(object):
         
         return cylinder
     
-    def _cal_score_seal(self):
+    def _cal_score_seal(self, suction_points, obj_ids, label_trans, label_rot, label_name):
         '''
         计算密封评分，密封评分用于确定在以特定姿势进行吸力抓取时吸盘是否能保持真空状态
         '''
-        return 0
+        # 坐标归一化到物体坐标系
+        suction_points_normalization = np.matmul((suction_points - label_trans).reshape(self.target_num_point,1,3), label_rot.reshape(-1,3,3) )
+        suction_points_normalization = suction_points_normalization.reshape(self.target_num_point, 3)
+        suction_seal_scores  = np.zeros((self.target_num_point, ))
+        # 计算吸取点的密封分数
+        for index in range(len(label_name)):
+            # 读取每个物体的稀疏点和分数
+            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
+            object_sparse_point = annotation['points']
+            anno_points = annotation['points']
+            anno_scores = annotation['scores']
+
+            suction_points_normalization_id = suction_points_normalization[obj_ids == index]
+            if suction_points_normalization_id.shape[0] == 0:
+                continue
+            suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float()
+            suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
+            anno_points_knn = torch.from_numpy(anno_points).float()
+            anno_points_knn = anno_points_knn.cuda()
+            # knn最近邻查找, 获取吸取点的密封分数
+            indices, dist=knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
+            dist=dist.cpu().numpy().reshape(dist.shape[-1])
+            suction_seal_scores[obj_ids == index] = anno_scores[dist]
+        return suction_seal_scores
     
-    def _cal_score_wrench(self, normals, score):
+    def _score_seel_visiualization(self, score_seal, suction_points, suction_or):
+        # 可视化吸取分数
+        show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(suction_points))
+        colors_temp = [[0, 0, 1]  for i in range(suction_points.shape[0])]
+        show_point_temp.colors = o3d.utility.Vector3dVector(colors_temp)
+        vis_list = [  show_point_temp   ]
+        for idx in range(len(suction_points[0:1024*4])):
+            suction_point = suction_points[idx]
+            suction_score = score_seal[idx]
+            ball = o3d.geometry.TriangleMesh.create_sphere(0.001).translate(suction_point)
+            ball_v = np.asarray(ball.vertices)
+            ball_colors = np.zeros((ball_v.shape[0], 3), dtype=np.float32)
+            ball_colors[:, 0] = suction_score
+            ball.vertex_colors = o3d.utility.Vector3dVector(ball_colors)
+            vis_list.append(ball)
+        # 可视化前100个吸取点的法线和分数
+        for idx in range(len(suction_points[0:100])):
+            suction_point = suction_points[idx]
+            anno_normal = suction_or[idx]
+            suction_score = score_seal[idx]
+            n = anno_normal
+            new_z = n
+            new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
+            new_y = new_y / np.linalg.norm(new_y)
+            new_x = np.cross(new_y, new_z)
+            new_x = new_x / np.linalg.norm(new_x)
+            new_x = np.expand_dims(new_x, axis=1)
+            new_y = np.expand_dims(new_y, axis=1)
+            new_z = np.expand_dims(new_z, axis=1)
+            rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
+            ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
+            vis_list.append(ball)
+        o3d.visualization.draw_geometries(vis_list, width=800, height=600)
+        # 绘制吸取分数直方图
+        import matplotlib.pyplot as plt
+        plt.hist(score_seal, bins=100)
+        plt.title("Histogram of Data")
+        plt.xlabel("Value")
+        plt.ylabel("Frequency")
+        plt.show()
+        return
+    
+    def _cal_score_wrench(self, suction_points, suction_or, label_trans):
         '''
         计算抗扭矩评分，抗扭矩评分用于判断吸盘在特定姿势下是否无法抵抗重力
         '''
-        return 0
+        # 计算吸取点的抗扭分数(考虑重力和吸盘姿态)
+        k = 30
+        radius = 0.01
+        wrench_thre = k * radius * np.pi * np.sqrt(2)
+        suction_wrench_scores = []
+        for index_temp,suction_points_temp in enumerate(suction_points):
+            label_trans_temp = label_trans[index_temp]
+            suction_or_temp = suction_or[index_temp]
+            center = label_trans_temp
+            gravity = np.array([[0, 0, 1]], dtype=np.float32) * 9.8  # 重力方向
+            suction_axis = viewpoint_to_matrix_z(suction_or_temp)  # (3, 3)
+            suction2center = (center - suction_points_temp)[np.newaxis, :]
+            coord = np.matmul(suction2center, suction_axis)
+            gravity_proj = np.matmul(gravity, suction_axis)
+            torque_y = gravity_proj[0, 0] * coord[0, 2] - gravity_proj[0, 2] * coord[0, 0]
+            torque_x = -gravity_proj[0, 1] * coord[0, 2] + gravity_proj[0, 2] * coord[0, 1]
+            torque = np.sqrt(torque_x**2 + torque_y**2)
+            score = 1 - min(1, torque / wrench_thre)
+            suction_wrench_scores.append(score)
+        suction_wrench_scores = np.array(suction_wrench_scores)
+        return suction_wrench_scores
     
-    def _cal_score_collision(self, points, obj_ids, label_trans, label_rot, label_id, label_name, collision_threshold=0.5):
+    def _cal_score_collision(self, suction_points, suction_or):
         '''
         计算碰撞评分，碰撞评分用于评估吸取点与其他物体的几何碰撞情况
         '''
-        return 0
+        # 计算吸取点的可行性分数(碰撞检测)
+        height = 0.1
+        radius = 0.01
+        scence_point = suction_points
+        suction_feasibility_scores = []
+        for index_temp,suction_points_temp in enumerate(suction_points):
+            suction_or_temp = suction_or[index_temp]
+            grasp_poses = viewpoint_to_matrix_x(suction_or_temp)
+            target = scence_point-suction_points_temp
+            target = np.matmul(target, grasp_poses)
+            target_yz = target[:, 1:3]
+            target_r = np.linalg.norm(target_yz, axis=-1)
+            mask1 = target_r < radius
+            mask2 = ((target[:,0] > 0.005) & (target[:,0] < height))
+            mask = np.any(mask1 & mask2)
+            suction_feasibility_scores.append(mask)
+        suction_feasibility_scores = ~np.array(suction_feasibility_scores)
+        return suction_feasibility_scores
     
-    def _cal_score_visibility(self, points, obj_ids, label_trans, label_rot, label_id, label_name, xyz_limit=None):
+    def _cal_score_visibility(self, label):
         '''
         计算可见性评分，可见性评分用于定量反映场景中对象的被遮挡程度
         '''
-        return 0
+        return label
     
     def _cal_suction_score(self):
         '''
@@ -503,112 +605,22 @@ class H5DataGenerator(object):
         plt.ylabel("Frequency")
         plt.show()
 
-        # 坐标归一化到物体坐标系
-        suction_points_normalization = np.matmul((suction_points - label_trans).reshape(self.target_num_point,1,3), label_rot.reshape(-1,3,3) )
-        suction_points_normalization = suction_points_normalization.reshape(self.target_num_point, 3)
-        suction_seal_scores  = np.zeros((self.target_num_point, ))
-        # 计算吸取点的密封分数
-        for index in range(len(label_name)):
-            # 读取每个物体的稀疏点和分数
-            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
-            object_sparse_point = annotation['points']
-            anno_points = annotation['points']
-            anno_scores = annotation['scores']
+        # 密封评分
+        score_seal = self._cal_score_seal(suction_points, obj_ids, label_trans, label_rot, label_name)
+        self._score_seel_visiualization(score_seal, suction_points, suction_or)
 
-            suction_points_normalization_id = suction_points_normalization[obj_ids == index]
-            if suction_points_normalization_id.shape[0] == 0:
-                continue
-            suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float()
-            suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
-            anno_points_knn = torch.from_numpy(anno_points).float()
-            anno_points_knn = anno_points_knn.cuda()
-            # knn最近邻查找, 获取吸取点的密封分数
-            indices, dist=knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
-            dist=dist.cpu().numpy().reshape(dist.shape[-1])
-            suction_seal_scores[obj_ids == index] = anno_scores[dist]
+        # 抗扭矩评分
+        score_wrench = self._cal_score_wrench(suction_points, suction_or,  label_trans)
 
-        # 可视化吸取分数
-        show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-        colors_temp = [[0, 0, 1]  for i in range(points.shape[0])]
-        show_point_temp.colors = o3d.utility.Vector3dVector(colors_temp)
-        vis_list = [  show_point_temp   ]
-        for idx in range(len(suction_points[0:1024*4])):
-            suction_point = suction_points[idx]
-            suction_score = suction_seal_scores[idx]
-            ball = o3d.geometry.TriangleMesh.create_sphere(0.001).translate(suction_point)
-            ball_v = np.asarray(ball.vertices)
-            ball_colors = np.zeros((ball_v.shape[0], 3), dtype=np.float32)
-            ball_colors[:, 0] = suction_score
-            ball.vertex_colors = o3d.utility.Vector3dVector(ball_colors)
-            vis_list.append(ball)
-        # 可视化前100个吸取点的法线和分数
-        for idx in range(len(suction_points[0:100])):
-            suction_point = suction_points[idx]
-            anno_normal = suction_or[idx]
-            suction_score = suction_seal_scores[idx]
-            n = anno_normal
-            new_z = n
-            new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
-            new_y = new_y / np.linalg.norm(new_y)
-            new_x = np.cross(new_y, new_z)
-            new_x = new_x / np.linalg.norm(new_x)
-            new_x = np.expand_dims(new_x, axis=1)
-            new_y = np.expand_dims(new_y, axis=1)
-            new_z = np.expand_dims(new_z, axis=1)
-            rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
-            ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
-            vis_list.append(ball)
-        o3d.visualization.draw_geometries(vis_list, width=800, height=600)
-        # 绘制吸取分数直方图
-        import matplotlib.pyplot as plt
-        plt.hist(suction_seal_scores, bins=100)
-        plt.title("Histogram of Data")
-        plt.xlabel("Value")
-        plt.ylabel("Frequency")
-        plt.show()
+        # 碰撞评分
+        score_collision = self._cal_score_collision(suction_points, suction_or)
 
-        # 计算吸取点的抗扭分数(考虑重力和吸盘姿态)
-        k = 30
-        radius = 0.01
-        wrench_thre = k * radius * np.pi * np.sqrt(2)
-        suction_wrench_scores = []
-        for index_temp,suction_points_temp in enumerate(suction_points):
-            label_trans_temp = label_trans[index_temp]
-            suction_or_temp = suction_or[index_temp]
-            center = label_trans_temp
-            gravity = np.array([[0, 0, 1]], dtype=np.float32) * 9.8  # 重力方向
-            suction_axis = viewpoint_to_matrix_z(suction_or_temp)  # (3, 3)
-            suction2center = (center - suction_points_temp)[np.newaxis, :]
-            coord = np.matmul(suction2center, suction_axis)
-            gravity_proj = np.matmul(gravity, suction_axis)
-            torque_y = gravity_proj[0, 0] * coord[0, 2] - gravity_proj[0, 2] * coord[0, 0]
-            torque_x = -gravity_proj[0, 1] * coord[0, 2] + gravity_proj[0, 2] * coord[0, 1]
-            torque = np.sqrt(torque_x**2 + torque_y**2)
-            score = 1 - min(1, torque / wrench_thre)
-            suction_wrench_scores.append(score)
-        suction_wrench_scores = np.array(suction_wrench_scores)
-
-        # 计算吸取点的可行性分数(碰撞检测)
-        height = 0.1
-        radius = 0.01
-        scence_point = points
-        suction_feasibility_scores = []
-        for index_temp,suction_points_temp in enumerate(suction_points):
-            suction_or_temp = suction_or[index_temp]
-            grasp_poses = viewpoint_to_matrix_x(suction_or_temp)
-            target = scence_point-suction_points_temp
-            target = np.matmul(target, grasp_poses)
-            target_yz = target[:, 1:3]
-            target_r = np.linalg.norm(target_yz, axis=-1)
-            mask1 = target_r < radius
-            mask2 = ((target[:,0] > 0.005) & (target[:,0] < height))
-            mask = np.any(mask1 & mask2)
-            suction_feasibility_scores.append(mask)
-        suction_feasibility_scores = ~np.array(suction_feasibility_scores)
+        # 可见性评分
+        score_visibility = self._cal_score_visibility(individual_object_size_lable)
 
         # 综合所有分数, 得到最终分数并排序
-        score_all = suction_seal_scores * suction_wrench_scores
-        score_all = suction_seal_scores * suction_wrench_scores* suction_feasibility_scores*individual_object_size_lable
+        score_all = score_seal * score_wrench * score_collision * score_visibility
+
         sorted_indices = np.argsort(score_all)[::-1]
         score_all_asort = score_all[sorted_indices]
         points_asort = points[sorted_indices]
@@ -650,10 +662,10 @@ class H5DataGenerator(object):
         with h5py.File(output_file_path,'w') as f:
             f['points'] = points
             f['suction_or'] = suction_or
-            f['suction_seal_scores'] = suction_seal_scores
-            f['suction_wrench_scores'] = suction_wrench_scores
-            f['suction_feasibility_scores'] = suction_feasibility_scores
-            f['individual_object_size_lable'] = individual_object_size_lable
+            f['suction_seal_scores'] = score_seal
+            f['suction_wrench_scores'] = score_wrench
+            f['suction_feasibility_scores'] = score_collision
+            f['individual_object_size_lable'] = score_visibility
 
 
 

@@ -11,7 +11,7 @@
             "program": "${workspaceFolder}/generate_dataset/physics_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_num", "0",
                 "--scene_num", "50"
                 // "--visualize"
@@ -27,7 +27,7 @@
             "program": "${workspaceFolder}/generate_dataset/render_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
                 "--scene_list", "[1,50]",
                 "--use_gpu"
@@ -40,7 +40,7 @@
             "program": "${workspaceFolder}/generate_dataset/render_utils_single.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "1",
                 "--scene_list", "50",
                 "--use_gpu"
@@ -53,7 +53,7 @@
             "program": "${workspaceFolder}/generate_dataset/individual_object_size.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "[0,5]",
                 "--scene_list", "[30,35]",
             ]
@@ -65,7 +65,7 @@
             "program": "${workspaceFolder}/generate_dataset/gt_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
                 "--scene_list", "[39,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
@@ -78,7 +78,7 @@
             "program": "${workspaceFolder}/apply_dataset/generate_train_dataset.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "0",
                 "--scene_list", "[1,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",

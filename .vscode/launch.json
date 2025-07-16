@@ -54,8 +54,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,5]",
-                "--scene_list", "[30,35]",
+                "--cycle_list", "[0,1]",
+                "--scene_list", "[1,50]",
             ]
         },
         {

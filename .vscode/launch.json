@@ -66,8 +66,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "0",
-                "--scene_list", "[39,50]",
+                "--cycle_list", "[0,1]",
+                "--scene_list", "[1,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
             ]
         },

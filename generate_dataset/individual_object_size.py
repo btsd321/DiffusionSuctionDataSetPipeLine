@@ -22,7 +22,6 @@ from matplotlib.font_manager import FontProperties
 import OpenEXR
 import Imath
 
-matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'WenQuanYi Zen Hei', 'SimHei', 'Arial Unicode MS']
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 
 font = FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
@@ -129,7 +128,7 @@ def render_scenes():
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 # mask_id = image_id[:,:, 2] = 1
                 # mask_id = (image_id[:,:, 1] >= 0.0) & (image_id[:,:, 0] <= 1 / scene_id + 0.00000001)
-                mask_id = image_id[:,:, 1] <= (step + 0.0000000001)
+                mask_id = (image_id[:,:, 1] < 0.05) & (image_id[:,:, 0] > 0.5)
 
                 # 获取所有物体的掩码中属于当前物体的部分
                 mask_ids = mask_ids_all == i
@@ -143,40 +142,40 @@ def render_scenes():
                 # 计算交集
                 intersection = np.sum(mask_id & mask_ids)
 
-                fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                axs[0].imshow(mask_id, cmap='gray')
-                axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
-                axs[1].imshow(mask_ids, cmap='gray')
-                axs[1].set_title(f"mask_ids (多物体分割ID=={i})", fontproperties=font)
-                # 叠加显示，两者都为True的像素显示为红色
-                overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
-                overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
-                overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
-                overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
-                axs[2].imshow(overlay)
-                axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids", fontproperties=font)
-                for ax in axs:
-                    ax.axis('off')
-                plt.suptitle(f"scene {scene_id}, object {i}")
-                plt.tight_layout()
-                plt.show()
+                # fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+                # axs[0].imshow(mask_id, cmap='gray')
+                # axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
+                # axs[1].imshow(mask_ids, cmap='gray')
+                # axs[1].set_title(f"mask_ids (多物体分割ID=={i})", fontproperties=font)
+                # # 叠加显示，两者都为True的像素显示为红色
+                # overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
+                # overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
+                # overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
+                # overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
+                # axs[2].imshow(overlay)
+                # axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids", fontproperties=font)
+                # for ax in axs:
+                #     ax.axis('off')
+                # plt.suptitle(f"scene {scene_id}, object {i}", fontproperties=font)
+                # plt.tight_layout()
+                # plt.show()
 
                 if exposed_pixels_single * 1.5 < exposed_pixels:
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
                     axs[0].imshow(mask_id, cmap='gray')
-                    axs[0].set_title(f"mask_id (单物体掩码)")
+                    axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
                     axs[1].imshow(mask_ids, cmap='gray')
-                    axs[1].set_title(f"mask_ids (多物体分割ID=={i})")
+                    axs[1].set_title(f"mask_ids (多物体分割ID=={i})", fontproperties=font)
                     # 叠加显示，两者都为True的像素显示为红色
                     overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
                     overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
                     overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
                     overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
                     axs[2].imshow(overlay)
-                    axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids")
+                    axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids", fontproperties=font)
                     for ax in axs:
                         ax.axis('off')
-                    plt.suptitle(f"scene {scene_id}, object {i}")
+                    plt.suptitle(f"scene {scene_id}, object {i}", fontproperties=font)
                     plt.tight_layout()
                     plt.show()
 

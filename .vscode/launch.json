@@ -15,9 +15,6 @@
                 "--cycle_num", "0",
                 "--scene_num", "50"
                 // "--visualize"
-
-
-                
             ]
         },
         {

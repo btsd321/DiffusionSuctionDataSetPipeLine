@@ -45,7 +45,7 @@ import os            # 操作系统接口
 import time          # 时间测量
 import torch         # 深度学习框架
 import open3d as o3d # 3D点云处理
-from pytorch3d.ops import knn_points  # CUDA KNN
+from torch_cluster import knn  # KNN最近邻搜索
 
 # PointNet2操作库，用于点云采样
 from pointnet2_ops_lib.pointnet2_ops.pointnet2_utils import furthest_point_sample
@@ -344,7 +344,7 @@ class H5DataGenerator(object):
         # 计算吸取点的密封分数
         for index in range(len(label_name)):
             # 读取每个物体的稀疏点和分数
-            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
+            annotation = np.load(os.path.join(OBJ_PATH, label_name[index], "labels.npz"))
             object_sparse_point = annotation['points']
             anno_points = annotation['points']
             anno_scores = annotation['scores']
@@ -352,16 +352,14 @@ class H5DataGenerator(object):
             suction_points_normalization_id = suction_points_normalization[obj_ids == index]
             if suction_points_normalization_id.shape[0] == 0:
                 continue
-            # 转为 torch tensor 并放到 CUDA
-            suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float().cuda()
-            anno_points_knn = torch.from_numpy(anno_points).float().cuda()
-            # pytorch3d 的 knn_points 需要 (B, N, 3) 形状
-            query = suction_points_normalization_id_knn.unsqueeze(0)  # (1, M, 3)
-            ref = anno_points_knn.unsqueeze(0)  # (1, N, 3)
-            knn_result = knn_points(query, ref, K=1)
-            indices = knn_result.idx[0, :, 0].cpu().numpy()  # (M,)
-            # 直接用 indices 索引 anno_scores
-            suction_seal_scores[obj_ids == index] = anno_scores[indices]
+            suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float()
+            suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
+            anno_points_knn = torch.from_numpy(anno_points).float()
+            anno_points_knn = anno_points_knn.cuda()
+            # knn最近邻查找, 获取吸取点的密封分数
+            indices, dist=knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
+            dist=dist.cpu().numpy().reshape(dist.shape[-1])
+            suction_seal_scores[obj_ids == index] = anno_scores[dist]
         return suction_seal_scores
     
     def _score_seel_visiualization(self, score_seal, suction_points, suction_or):

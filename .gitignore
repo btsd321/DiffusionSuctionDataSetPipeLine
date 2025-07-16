@@ -144,6 +144,9 @@ Data
 **/__pycache__/
 
 .conda_env
+linux_conda
 blender_python_path.txt
 diffusion_suction_conda
 times.npy
+
+windows_environment.yml

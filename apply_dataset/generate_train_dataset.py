@@ -111,7 +111,10 @@ if __name__ == "__main__":
 
     # 创建H5数据生成器实例，加载参数配置
     # 该实例负责将多模态原始数据转换为标准化的H5训练数据
-    g = H5DataGenerator(params_file_name = FLAGS.parameter_file, camera_info_file_name = FLAGS.camera_info_file, target_num_point=16384)
+    g = H5DataGenerator(params_file_name = FLAGS.parameter_file, 
+                        camera_info_file_name = FLAGS.camera_info_file, 
+                        objs_path = os.path.join(FLAGS.data_dir, 'OBJ'),
+                        target_num_point=16384)
     
     # 外层循环：遍历所有指定的循环（数据批次）
     for cycle_id in CYCLE_idx_list:

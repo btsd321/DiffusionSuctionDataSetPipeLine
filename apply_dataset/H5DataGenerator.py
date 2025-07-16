@@ -35,11 +35,6 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
 from camera_info import CameraInfo
-# 获取项目目录结构
-FILE_PATH = os.path.abspath(__file__)
-FILE_DIR_generate_dataset = os.path.dirname(FILE_PATH)
-FILE_DIR = os.path.dirname(FILE_DIR_generate_dataset)
-OBJ_PATH = os.path.join(FILE_DIR, 'OBJ')  # 3D物体模型路径
 
 # 导入必要的库
 import json          # JSON配置文件解析
@@ -127,7 +122,7 @@ class H5DataGenerator(object):
     多维度评分计算等功能。
     """
     
-    def __init__(self, params_file_name, camera_info_file_name, target_num_point=16384):
+    def __init__(self, params_file_name, camera_info_file_name, objs_path, target_num_point=16384):
         """
         初始化数据生成器，加载相机参数和处理配置
         
@@ -142,6 +137,7 @@ class H5DataGenerator(object):
         self.cam_info = CameraInfo(camera_info_file_name)
         # 设置点云采样目标数量，确保数据一致性
         self.target_num_point = target_num_point
+        self.objs_path = objs_path
 
     def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm=False, xyz_limit=None):
         """
@@ -329,6 +325,41 @@ class H5DataGenerator(object):
         cylinder.vertex_colors = o3d.utility.Vector3dVector(ball_colors)
         
         return cylinder
+    
+    def _cal_score_seal(self):
+        '''
+        计算密封评分，密封评分用于确定在以特定姿势进行吸力抓取时吸盘是否能保持真空状态
+        '''
+        return 0
+    
+    def _cal_score_wrench(self, normals, score):
+        '''
+        计算抗扭矩评分，抗扭矩评分用于判断吸盘在特定姿势下是否无法抵抗重力
+        '''
+        return 0
+    
+    def _cal_score_collision(self, points, obj_ids, label_trans, label_rot, label_id, label_name, collision_threshold=0.5):
+        '''
+        计算碰撞评分，碰撞评分用于评估吸取点与其他物体的几何碰撞情况
+        '''
+        return 0
+    
+    def _cal_score_visibility(self, points, obj_ids, label_trans, label_rot, label_id, label_name, xyz_limit=None):
+        '''
+        计算可见性评分，可见性评分用于定量反映场景中对象的被遮挡程度
+        '''
+        return 0
+    
+    def _cal_suction_score(self):
+        '''
+        计算吸取分数，公式：总分数=Seal * Wrench * Collision * Visibility(密封评分*抗扭矩评分*碰撞评分*可见性评分)
+        '''
+        score_seal = self._cal_score_seal()
+        score_wrench = self._cal_score_wrench()
+        score_collision = self._cal_score_collision()
+        score_visibility = self._cal_score_visibility()
+        score = score_seal * score_wrench * score_collision * score_visibility
+        return score
 
     def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path, xyz_limit=None):
         """
@@ -343,9 +374,9 @@ class H5DataGenerator(object):
         3. 法向量估计：使用KDTree和半径搜索
         4. 多维评分计算：
            - 密封评分：基于预训练模型的KNN插值
-           - 抗扭评分：考虑重力和力矩的物理建模
-           - 可行性评分：几何碰撞检测
-           - 尺寸评分：物体暴露面积比例
+           - 抗扭矩评分：考虑重力和力矩的物理建模
+           - 碰撞评分：几何碰撞检测
+           - 可见性评分：物体暴露面积比例
         5. 数据可视化：用于验证和调试
         6. H5格式保存：标准化输出
         
@@ -473,13 +504,13 @@ class H5DataGenerator(object):
         plt.show()
 
         # 坐标归一化到物体坐标系
-        suction_points_normalization = np.matmul((suction_points - label_trans).reshape(16384,1,3), label_rot.reshape(-1,3,3) )
-        suction_points_normalization = suction_points_normalization.reshape(16384, 3)
-        suction_seal_scores  = np.zeros((16384, ))
+        suction_points_normalization = np.matmul((suction_points - label_trans).reshape(self.target_num_point,1,3), label_rot.reshape(-1,3,3) )
+        suction_points_normalization = suction_points_normalization.reshape(self.target_num_point, 3)
+        suction_seal_scores  = np.zeros((self.target_num_point, ))
         # 计算吸取点的密封分数
         for index in range(len(label_name)):
             # 读取每个物体的稀疏点和分数
-            annotation = np.load(os.path.join(OBJ_PATH, label_name[index], "labels.npz"))
+            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
             object_sparse_point = annotation['points']
             anno_points = annotation['points']
             anno_scores = annotation['scores']

@@ -33,6 +33,8 @@
 
 import os
 import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
+from camera_info import CameraInfo
 # 获取项目目录结构
 FILE_PATH = os.path.abspath(__file__)
 FILE_DIR_generate_dataset = os.path.dirname(FILE_PATH)
@@ -125,7 +127,7 @@ class H5DataGenerator(object):
     多维度评分计算等功能。
     """
     
-    def __init__(self, params_file_name, target_num_point=16384):
+    def __init__(self, params_file_name, camera_info_file_name, target_num_point=16384):
         """
         初始化数据生成器，加载相机参数和处理配置
         
@@ -134,8 +136,10 @@ class H5DataGenerator(object):
             target_num_point (int): 点云采样的目标点数，默认16384
                                    这个数量平衡了计算效率和数据质量
         """
-        # 加载相机内参、深度范围等关键参数
+        # 加载深度范围等关键参数
         self.params = self._load_parameters(params_file_name)
+        # 加载相机内参
+        self.cam_info = CameraInfo(camera_info_file_name)
         # 设置点云采样目标数量，确保数据一致性
         self.target_num_point = target_num_point
 
@@ -160,17 +164,16 @@ class H5DataGenerator(object):
         assert len(us) == len(vs) == len(zs), "坐标数组长度必须一致"
         
         # 从参数配置中获取相机内参
-        camera_info = self.params
-        fx = camera_info['fu']  # x方向焦距
-        fy = camera_info['fv']  # y方向焦距  
-        cx = camera_info['cu']  # x方向主点坐标
-        cy = camera_info['cv']  # y方向主点坐标
-        clip_start = camera_info['clip_start']  # 近裁剪面距离
-        clip_end = camera_info['clip_end']      # 远裁剪面距离
+        fx = self.cam_info.intrinsic_matrix[0, 0]
+        fy = self.cam_info.intrinsic_matrix[1, 1]
+        cx = self.cam_info.intrinsic_matrix[0, 2]  # x方向主点坐标
+        cy = self.cam_info.intrinsic_matrix[1, 2]  # y方向主点坐标
+        clip_start = self.params['clip_start']  # 近裁剪面距离
+        clip_end = self.params['clip_end']      # 远裁剪面距离
         
         # 将归一化深度值转换为真实距离（米）
         # 深度图中的值通常是归一化的，需要映射到真实距离范围
-        Zline = clip_start + (zs/camera_info['max_val_in_depth']) * (clip_end - clip_start)
+        Zline = clip_start + (zs/self.params['max_val_in_depth']) * (clip_end - clip_start)
         
         # 考虑透视投影的距离校正
         # 校正由于透视投影导致的距离失真
@@ -358,7 +361,9 @@ class H5DataGenerator(object):
         
         # === 第1步：数据验证和预处理 ===
         # 验证深度图像格式和尺寸
-        expected_shape = (self.params['resolutionY'], self.params['resolutionX'])
+        W = self.cam_info.intrinsic_matrix[0, 2] * 2  # 水平分辨率
+        H = self.cam_info.intrinsic_matrix[1, 2] * 2
+        expected_shape = (H, W)
         assert depth_img.shape == expected_shape and depth_img.dtype == np.uint16, \
             f"深度图像格式错误：期望{expected_shape}, uint16，实际{depth_img.shape}, {depth_img.dtype}"
         

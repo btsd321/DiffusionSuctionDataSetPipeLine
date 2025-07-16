@@ -71,5 +71,20 @@
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
             ]
         },
+        {
+            "name": "apply_dataset: generate_train_dataset.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/apply_dataset/generate_train_dataset.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "${workspaceFolder}/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "0",
+                "--scene_list", "[39,50]",
+                "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
+                "--parameter_file", "${workspaceFolder}/config/parameter.json",
+                
+            ]
+        }
     ]
 }

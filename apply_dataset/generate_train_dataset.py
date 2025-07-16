@@ -32,55 +32,86 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 # test = torch.randn(30, 3).cuda()  # GPU测试代码（已注释）
 
 import sys
-# 获取当前文件的绝对路径
-FILE_PATH = os.path.abspath(__file__)
-# 获取当前目录（apply_dataset）的路径
-FILE_DIR_generate_dataset = os.path.dirname(FILE_PATH)
-# 获取项目根目录路径
-FILE_DIR = os.path.dirname(FILE_DIR_generate_dataset)
-
-# 将项目根目录添加到Python路径中，以便导入其他模块
-sys.path.append(FILE_DIR)
-# 数据生成器的参数配置文件路径
-DATASET_apply_dataset_parameter = os.path.join(FILE_DIR_generate_dataset, 'parameter.json')
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
+from camera_info import CameraInfo
+import argparse
+import re
     
 # 导入H5数据生成器模块，包含所有数据处理的核心功能
 from H5DataGenerator import *
 
+# 命令行参数解析
+parser = argparse.ArgumentParser()
+# 数据集根目录
+parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
+parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
+parser.add_argument('--parameter_file', type=str, default='parameter.json', help='数据生成器参数配置文件路径')
+FLAGS = parser.parse_args()
+
+def parse_range_or_single(input_str):
+    """
+    解析输入字符串，支持以下格式：
+    - 单个值: "5" -> [5]
+    - 区间: "[1,10]" -> [1,2,3,4,5,6,7,8,9,10]
+    - 列表: "{1,3,5}" -> [1,3,5]
+    """
+    input_str = input_str.strip()
+    
+    # 如果是区间格式 [start,end]
+    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        return list(range(start, end + 1))
+    
+    # 如果是列表格式 {1,3,5,7}
+    list_match = re.match(r'^\{(.+)\}$', input_str)
+    if list_match:
+        values_str = list_match.group(1)
+        return [int(x.strip()) for x in values_str.split(',')]
+    
+    # 如果是单个数字
+    if input_str.isdigit():
+        return [int(input_str)]
+    
+    # 如果都不匹配，抛出错误
+    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
+
 # 定义H5数据集的根输出目录
-OUT_ROOT_DIR = os.path.join(FILE_DIR, 'h5_dataset')
+OUT_ROOT_DIR = os.path.join(FLAGS.data_dir, 'h5_dataset')
 if not os.path.exists(OUT_ROOT_DIR):
     os.makedirs(OUT_ROOT_DIR)    
 
 # 定义训练集的输出目录
-TRAIN_SET_DIR = os.path.join(OUT_ROOT_DIR, 'train')
+TRAIN_SET_DIR = os.path.join(FLAGS.data_dir, 'train')
 if not os.path.exists(TRAIN_SET_DIR):
     os.mkdir(TRAIN_SET_DIR)
 
 # 定义各类输入数据的目录路径
-GT_DIR = os.path.join(FILE_DIR, 'gt')  # 真值标签目录：物体6D位姿等ground truth数据
-SEGMENT_DIR = os.path.join(FILE_DIR, 'segment_images')  # 分割图像目录：EXR格式，包含物体ID和分割掩码
-DEPTH_DIR = os.path.join(FILE_DIR, 'depth_images')  # 深度图像目录：PNG格式，用于3D点云重建
-OBJ_PATH = os.path.join(FILE_DIR, 'OBJ')  # 3D物体模型目录：包含OBJ格式的物体几何模型
-GT_PATH = os.path.join(FILE_DIR, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
-INDIVIDUA_PATH = os.path.join(FILE_DIR, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
+GT_DIR = os.path.join(FLAGS.data_dir, 'gt')  # 真值标签目录：物体6D位姿等ground truth数据
+SEGMENT_DIR = os.path.join(FLAGS.data_dir, 'segment_images')  # 分割图像目录：EXR格式，包含物体ID和分割掩码
+DEPTH_DIR = os.path.join(FLAGS.data_dir, 'depth_images')  # 深度图像目录：PNG格式，用于3D点云重建
+OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含OBJ格式的物体几何模型
+GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
+INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
 if __name__ == "__main__":
     # 设置要处理的数据范围
-    # 循环编号范围：每个循环代表一组独立的场景数据
-    CYCLE_idx_list = range(81, 100)  # 处理第81-99个循环（共19个循环）
-    # 场景编号范围：每个循环内包含的场景数量
-    SCENE_idx_list = range(1, 51)    # 处理1-50号场景（每个循环50个场景）
+    # # 循环编号范围：每个循环代表一组独立的场景数据
+    # CYCLE_idx_list = range(81, 100)  # 处理第81-99个循环（共19个循环）
+    # # 场景编号范围：每个循环内包含的场景数量
+    # SCENE_idx_list = range(1, 51)    # 处理1-50号场景（每个循环50个场景）
 
     # --------------------------------------------------------------------------
     # 调试模式：用于调试法线估计算法时，只处理少量数据以加快测试速度
-    CYCLE_idx_list = range(0, 1)     # 仅处理第0个循环
-    SCENE_idx_list = range(1, 51)    # 仍处理1-50号场景
+    CYCLE_idx_list = FLAGS.cycle_list     # 仅处理第0个循环
+    SCENE_idx_list = FLAGS.scene_list     # 仍处理1-50号场景
     # --------------------------------------------------------------------------
 
     # 创建H5数据生成器实例，加载参数配置
     # 该实例负责将多模态原始数据转换为标准化的H5训练数据
-    g = H5DataGenerator(DATASET_apply_dataset_parameter)
+    g = H5DataGenerator(params_file_name = FLAGS.parameter_file, camera_info_file_name = FLAGS.camera_info_file, target_num_point=16384)
     
     # 外层循环：遍历所有指定的循环（数据批次）
     for cycle_id in CYCLE_idx_list:

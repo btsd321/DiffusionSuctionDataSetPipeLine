@@ -612,40 +612,40 @@ class H5DataGenerator(object):
         suction_points = points  # 吸取候选点
         suction_or = np.array(pc_o3d.normals).astype(np.float32)  # 对应的法向量
 
-        # 法线可视化
-        show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-        show_point_temp.colors = o3d.utility.Vector3dVector([[0, 0, 1]  for i in range(points.shape[0])])
-        vis_list = [  show_point_temp   ]
-        # 可视化前100个吸取点的法线方向
-        for idx in range(len(suction_points[0:100])):
-            suction_point = suction_points[idx]
-            anno_normal = suction_or[idx]
-            suction_score = individual_object_size_lable[idx]
-            n = anno_normal
-            new_z = n
-            new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
-            new_y = new_y / np.linalg.norm(new_y)
-            new_x = np.cross(new_y, new_z)
-            new_x = new_x / np.linalg.norm(new_x)
-            new_x = np.expand_dims(new_x, axis=1)
-            new_y = np.expand_dims(new_y, axis=1)
-            new_z = np.expand_dims(new_z, axis=1)
-            rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
-            ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
-            vis_list.append(ball)
-        o3d.visualization.draw_geometries(vis_list, width=800, height=600)
+        # # 法线可视化
+        # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+        # show_point_temp.colors = o3d.utility.Vector3dVector([[0, 0, 1]  for i in range(points.shape[0])])
+        # vis_list = [  show_point_temp   ]
+        # # 可视化前100个吸取点的法线方向
+        # for idx in range(len(suction_points[0:100])):
+        #     suction_point = suction_points[idx]
+        #     anno_normal = suction_or[idx]
+        #     suction_score = individual_object_size_lable[idx]
+        #     n = anno_normal
+        #     new_z = n
+        #     new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
+        #     new_y = new_y / np.linalg.norm(new_y)
+        #     new_x = np.cross(new_y, new_z)
+        #     new_x = new_x / np.linalg.norm(new_x)
+        #     new_x = np.expand_dims(new_x, axis=1)
+        #     new_y = np.expand_dims(new_y, axis=1)
+        #     new_z = np.expand_dims(new_z, axis=1)
+        #     rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
+        #     ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
+        #     vis_list.append(ball)
+        # o3d.visualization.draw_geometries(vis_list, width=800, height=600)
         # 绘制尺寸标签直方图
-        import matplotlib.pyplot as plt
-        individual_object_size_lable_temp = individual_object_size_lable*100
-        plt.hist(individual_object_size_lable_temp.astype(int), bins=100)
-        plt.title("Histogram of Visibility Score")
-        plt.xlabel("Value")
-        plt.ylabel("Frequency")
-        plt.show()
+        # import matplotlib.pyplot as plt
+        # individual_object_size_lable_temp = individual_object_size_lable*100
+        # plt.hist(individual_object_size_lable_temp.astype(int), bins=100)
+        # plt.title("Histogram of Visibility Score")
+        # plt.xlabel("Value")
+        # plt.ylabel("Frequency")
+        # plt.show()
 
         # 密封评分
         score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
-        self._score_seel_visiualization(score_seal, suction_points, suction_or)
+        # self._score_seel_visiualization(score_seal, suction_points, suction_or)
 
         # 抗扭矩评分
         score_wrench = self._cal_score_wrench(suction_points, suction_or,  points_label_trans)
@@ -668,35 +668,35 @@ class H5DataGenerator(object):
         # 打印最高分及该分数对应的点
         print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
 
-        # 可视化最终排序后的吸取点
-        show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points_asort))
-        colors_temp = [[0, 0, 1]  for i in range(points.shape[0])]
-        show_point_temp.colors = o3d.utility.Vector3dVector(colors_temp)
-        vis_list = [  show_point_temp   ]
-        for idx in range(len(suction_points_asort[0:600])):
-            suction_point = suction_points_asort[idx]
-            anno_normal = suction_or_asort[idx]
-            suction_score = score_all_asort[idx]
-            n = anno_normal
-            new_z = n
-            new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
-            new_y = new_y / np.linalg.norm(new_y)
-            new_x = np.cross(new_y, new_z)
-            new_x = new_x / np.linalg.norm(new_x)
-            new_x = np.expand_dims(new_x, axis=1)
-            new_y = np.expand_dims(new_y, axis=1)
-            new_z = np.expand_dims(new_z, axis=1)
-            rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
-            ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
-            vis_list.append(ball)
-        o3d.visualization.draw_geometries(vis_list, width=800,   height=600)
+        # # 可视化最终排序后的吸取点
+        # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points_asort))
+        # colors_temp = [[0, 0, 1]  for i in range(points.shape[0])]
+        # show_point_temp.colors = o3d.utility.Vector3dVector(colors_temp)
+        # vis_list = [  show_point_temp   ]
+        # for idx in range(len(suction_points_asort[0:600])):
+        #     suction_point = suction_points_asort[idx]
+        #     anno_normal = suction_or_asort[idx]
+        #     suction_score = score_all_asort[idx]
+        #     n = anno_normal
+        #     new_z = n
+        #     new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
+        #     new_y = new_y / np.linalg.norm(new_y)
+        #     new_x = np.cross(new_y, new_z)
+        #     new_x = new_x / np.linalg.norm(new_x)
+        #     new_x = np.expand_dims(new_x, axis=1)
+        #     new_y = np.expand_dims(new_y, axis=1)
+        #     new_z = np.expand_dims(new_z, axis=1)
+        #     rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
+        #     ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
+        #     vis_list.append(ball)
+        # o3d.visualization.draw_geometries(vis_list, width=800,   height=600)
         # 绘制最终分数直方图
-        import matplotlib.pyplot as plt
-        plt.hist(score_all, bins=100)
-        plt.title("Histogram of Final Score")
-        plt.xlabel("Value")
-        plt.ylabel("Frequency")
-        plt.show()
+        # import matplotlib.pyplot as plt
+        # plt.hist(score_all, bins=100)
+        # plt.title("Histogram of Final Score")
+        # plt.xlabel("Value")
+        # plt.ylabel("Frequency")
+        # plt.show()
 
         # ------------------------------------------------------------------------------------step 5: save as h5 file
         # 保存所有点云、法线、分数等为h5格式

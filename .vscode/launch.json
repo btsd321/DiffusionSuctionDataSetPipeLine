@@ -41,7 +41,8 @@
                 "--cycle_list", "[2,3]",
                 "--scene_list", "49",
                 "--use_gpu",
-                "--disable_print"
+                "--disable_print",
+                "--ultra_fast"
             ]
         },
         {

@@ -53,6 +53,8 @@ parser.add_argument('--disable_print', action='store_true',
                     help='禁用详细打印输出以提高性能')
 parser.add_argument('--headless', action='store_true', 
                     help='强制无头渲染模式，避免OpenGL上下文问题（适用于WSL）')
+parser.add_argument('--ultra_fast', action='store_true', 
+                    help='极速模式：最大化性能优化，适用于batch mask生成')
 FLAGS = parser.parse_args()
 
 try:
@@ -158,11 +160,15 @@ class BlenderRenderClass:
         self.img_w = self.cam_info.intrinsic_matrix[0,2] * 2
         self.img_h = self.cam_info.intrinsic_matrix[1,2] * 2
         
-        # 快速模式下降低分辨率
-        if FLAGS.fast_mode:
-            self.img_w = int(self.img_w * 0.5)  # 降低50%分辨率
-            self.img_h = int(self.img_h * 0.5)
-            print(f"快速模式：分辨率降至 {self.img_w}x{self.img_h}")
+        # # 快速模式下降低分辨率
+        # if FLAGS.fast_mode:
+        #     self.img_w = int(self.img_w * 0.5)  # 降低50%分辨率
+        #     self.img_h = int(self.img_h * 0.5)
+        #     print(f"快速模式：分辨率降至 {self.img_w}x{self.img_h}")
+        # elif FLAGS.ultra_fast:
+        #     self.img_w = int(self.img_w * 0.25)  # 极速模式：降低75%分辨率
+        #     self.img_h = int(self.img_h * 0.25)
+        #     print(f"极速模式：分辨率降至 {self.img_w}x{self.img_h}")
             
         self.CAMERA_RESOLUTION = [int(self.img_w), int(self.img_h)]
         # self.DEPTH_DIVIDE = depth_graph_divide
@@ -174,12 +180,6 @@ class BlenderRenderClass:
             self.meshScale = [1, 1, 1]
 
     def set_device(self):
-        # WSL环境下强制使用CPU渲染避免EGL问题
-        if os.environ.get('WSL_DISTRO_NAME') or 'microsoft' in os.uname().release.lower():
-            bpy.context.scene.cycles.device = 'CPU'
-            print('检测到WSL环境，使用CPU渲染避免EGL问题')
-            return
-            
         if FLAGS.use_gpu:
             try:
                 bpy.context.scene.cycles.device = 'GPU'
@@ -198,47 +198,35 @@ class BlenderRenderClass:
             print('已设置为CPU渲染')
 
     def camera_set(self):
-        # WSL环境检测和渲染引擎优化
-        is_wsl = os.environ.get('WSL_DISTRO_NAME') or 'microsoft' in os.uname().release.lower()
-        
-        # 针对mask生成优化渲染引擎选择
-        if FLAGS.save_img_type.lower() == 'png':
-            if is_wsl or FLAGS.headless:
-                if FLAGS.use_gpu:
-                    # WSL + GPU: 使用Cycles GPU渲染（CUDA不依赖OpenGL）
-                    bpy.data.scenes["Scene"].render.engine = "CYCLES"
-                    bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
-                    bpy.data.scenes["Scene"].cycles.aa_samples = 1
-                    bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
-                    print("WSL + GPU：使用Cycles GPU渲染，避免EGL问题")
-                else:
-                    # WSL + CPU: 使用WORKBENCH避免OpenGL问题
-                    bpy.data.scenes["Scene"].render.engine = "BLENDER_WORKBENCH"
-                    print("WSL + CPU：使用WORKBENCH引擎，避免EGL问题")
-            else:
-                # 正常环境使用EEVEE（最快）
-                bpy.data.scenes["Scene"].render.engine = "BLENDER_EEVEE_NEXT"
-                print("使用EEVEE引擎，适合快速mask生成")
-        else:
-            # EXR使用Cycles，保持高质量
-            bpy.data.scenes["Scene"].render.engine = "CYCLES"
-            bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
-            bpy.data.scenes["Scene"].cycles.aa_samples = 1
-            bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
-            print("使用Cycles引擎，保持高质量渲染")
+        # 统一使用Cycles引擎渲染
+        bpy.data.scenes["Scene"].render.engine = "CYCLES"
+        bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
+        bpy.data.scenes["Scene"].cycles.aa_samples = 1
+        bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
+        print("使用Cycles引擎渲染")
             
         bpy.data.scenes["Scene"].render.resolution_x = self.CAMERA_RESOLUTION[0]
         bpy.data.scenes["Scene"].render.resolution_y = self.CAMERA_RESOLUTION[1]
         bpy.data.scenes["Scene"].render.resolution_percentage = 100
+        
+        # # 极速模式下进一步优化渲染设置
+        # if FLAGS.ultra_fast:
+        #     bpy.data.scenes["Scene"].render.resolution_percentage = 50  # 再次降低分辨率
+        #     bpy.data.scenes["Scene"].render.pixel_aspect_x = 2.0  # 降低像素精度
+        #     bpy.data.scenes["Scene"].render.pixel_aspect_y = 2.0
+        #     print("极速模式：额外降低渲染精度")
+            
         bpy.data.cameras["Camera"].type = "PERSP"
         bpy.data.cameras["Camera"].lens = self.CAMERA_FOCAL_LEN
         bpy.data.cameras["Camera"].lens_unit = "MILLIMETERS"
         bpy.data.cameras["Camera"].sensor_width = self.CAMERA_SENSOR_SIZE[0]
         bpy.data.cameras["Camera"].sensor_height = self.CAMERA_SENSOR_SIZE[1]
         bpy.data.cameras["Camera"].sensor_fit = "HORIZONTAL"
-        bpy.data.scenes["Scene"].render.pixel_aspect_x = 1.0
-        bpy.data.scenes["Scene"].render.pixel_aspect_y = self.CAMERA_SENSOR_SIZE[1] * self.CAMERA_RESOLUTION[0] / \
-                                                         self.CAMERA_RESOLUTION[1] / self.CAMERA_SENSOR_SIZE[0]
+        
+        # if not FLAGS.ultra_fast:
+        #     bpy.data.scenes["Scene"].render.pixel_aspect_x = 1.0
+        #     bpy.data.scenes["Scene"].render.pixel_aspect_y = self.CAMERA_SENSOR_SIZE[1] * self.CAMERA_RESOLUTION[0] / \
+        #                                                      self.CAMERA_RESOLUTION[1] / self.CAMERA_SENSOR_SIZE[0]
        
         bpy.data.objects["Camera"].location = [self.cam_info.cam_translation_vector[0],
                                                self.cam_info.cam_translation_vector[1],
@@ -346,15 +334,12 @@ class BlenderRenderClass:
                 # 清空物体的所有材质槽
                 if obj.data.materials:
                     obj.data.materials.clear()
-                    # 减少打印输出，提高性能
-                    # print("delet object  materials")
        
         mymat = bpy.data.materials.get('mymat')
         if not mymat:
             mymat = bpy.data.materials.new('mymat')
             mymat.use_nodes = True
 
-        # 优化：根据输出格式选择不同的材质配置
         nodes = mymat.node_tree.nodes
         links = mymat.node_tree.links
         
@@ -423,11 +408,34 @@ class BlenderRenderClass:
                     self.depth_graph(depth_scene_path, segment_scene_path)  # 配置节点输出
                     # 只渲染rgb图, 速度较快
                     self.label_graph(len(obj_name) - 1)
-                    bpy.ops.render.render()  # 执行渲染
+                    
+                    # 极速模式：禁用不必要的Blender功能
+                    if FLAGS.ultra_fast:
+                        try:
+                            bpy.context.scene.render.use_motion_blur = False
+                            bpy.context.scene.render.use_border = False
+                            bpy.context.scene.render.use_crop_to_border = False
+                            bpy.context.scene.cycles.use_denoising = False if hasattr(bpy.context.scene.cycles, 'use_denoising') else None
+                            # 禁用所有后处理，使用最简单的色彩空间
+                            bpy.context.scene.view_settings.view_transform = 'Standard'
+                            bpy.context.scene.sequencer_colorspace_settings.name = 'sRGB'
+                        except Exception as e:
+                            print(f"极速模式设置遇到错误，忽略: {e}")
+                            
+                    # 使用try-catch保护渲染过程
+                    try:
+                        bpy.ops.render.render()  # 执行渲染
+                        print("渲染完成")
+                    except Exception as e:
+                        raise e
+                
                     
                     # 每个物体渲染后立即清理内存，防止内存累积
-                    if FLAGS.fast_mode:
+                    if FLAGS.fast_mode or FLAGS.ultra_fast:
                         bpy.ops.outliner.orphans_purge(do_recursive=True)
+                        # 极速模式：更频繁的内存清理
+                        if FLAGS.ultra_fast:
+                            gc.collect()
                     
                 # 主动清理未使用的数据块和垃圾回收
                 bpy.ops.outliner.orphans_purge(do_recursive=True)

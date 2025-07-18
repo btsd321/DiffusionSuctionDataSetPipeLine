@@ -122,7 +122,8 @@ if __name__ == "__main__":
     g = H5DataGenerator(params_file_name = FLAGS.parameter_file, 
                         camera_info_file_name = FLAGS.camera_info_file, 
                         objs_path = os.path.join(FLAGS.data_dir, 'OBJ'),
-                        target_num_point=16384)
+                        target_num_point=16384,
+                        test_flag = False)
     
     # 外层循环：遍历所有指定的循环（数据批次）
     for cycle_id in CYCLE_idx_list:

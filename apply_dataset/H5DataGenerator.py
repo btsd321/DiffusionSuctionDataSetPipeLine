@@ -59,7 +59,58 @@ import matplotlib.pyplot as plt
 
 # 可视化设置
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
-font = FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
+
+# 设置中文字体，处理字体文件不存在的情况
+def setup_chinese_font():
+    """
+    设置中文字体，提供多种字体路径的回退机制
+    """
+    # 尝试多种可能的中文字体路径
+    font_paths = [
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',     # 新安装的Noto CJK字体
+        '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',  # 系统中实际存在的中文字体
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+        '/System/Library/Fonts/PingFang.ttc',  # macOS
+        'C:\\Windows\\Fonts\\msyh.ttc',        # Windows
+        'C:\\Windows\\Fonts\\simhei.ttf',      # Windows
+    ]
+    
+    # 尝试每个字体路径
+    for font_path in font_paths:
+        if os.path.exists(font_path):
+            try:
+                font = FontProperties(fname=font_path)
+                print(f"成功加载字体: {font_path}")
+                return font
+            except Exception as e:
+                print(f"字体加载失败: {font_path}, 错误: {e}")
+                continue
+    
+    # 最后的回退：使用默认字体
+    print("警告: 未找到合适的中文字体，使用默认字体")
+    return FontProperties()
+
+# 设置matplotlib中文字体支持
+def setup_matplotlib_chinese():
+    """
+    设置matplotlib的中文字体支持
+    """
+    # 使用简单的字体设置，避免复杂的字体族配置
+    matplotlib.rcParams['axes.unicode_minus'] = False  # 负号正常显示
+    
+    # 清除matplotlib的字体缓存
+    try:
+        import matplotlib.font_manager as fm
+        fm._rebuild()
+    except:
+        pass
+
+# 初始化字体设置
+setup_matplotlib_chinese()
+font = setup_chinese_font()
+
 def viewpoint_to_matrix_x(towards):
     """
     根据朝向向量生成以x轴为主的旋转矩阵
@@ -127,7 +178,7 @@ class H5DataGenerator(object):
     多维度评分计算等功能。
     """
     
-    def __init__(self, params_file_name, camera_info_file_name, objs_path, target_num_point=16384):
+    def __init__(self, params_file_name, camera_info_file_name, objs_path, target_num_point=16384, test_flag=False):
         """
         初始化数据生成器，加载相机参数和处理配置
         
@@ -135,6 +186,7 @@ class H5DataGenerator(object):
             params_file_name (str): 参数配置文件路径("parameter.json")
             target_num_point (int): 点云采样的目标点数，默认16384
                                    这个数量平衡了计算效率和数据质量
+            enable_visualization (bool): 是否启用可视化，WSL环境中建议设为False
         """
         # 加载深度范围等关键参数
         self.params = self._load_parameters(params_file_name)
@@ -143,6 +195,8 @@ class H5DataGenerator(object):
         # 设置点云采样目标数量，确保数据一致性
         self.target_num_point = target_num_point
         self.objs_path = objs_path
+        # 可视化开关，WSL环境中建议关闭
+        self.test_flag = test_flag
 
     def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm=False, xyz_limit=None):
         """
@@ -510,9 +564,12 @@ class H5DataGenerator(object):
         obj_num = label_trans.shape[0]  # 场景中物体数量
         
         # 计算前景掩码
-        step = 1 / obj_num
+        if obj_num == 1:
+            step = 1.0  # 单个物体时，物体ID归一化步长为1
+        else:    
+            step = 1/(obj_num - 1)
         obj_ids = np.full(segment_img[:, :, 1].shape, 0, dtype=np.float32)
-        valid_mask = segment_img[:, :, 0] > 0.5  # 前景点掩码
+        valid_mask = (segment_img[:, :, 0] > 0.5)  # 前景点掩码
         
         # === 第2步：深度图转点云 ===
         # 提取非零深度像素的坐标（前景点）
@@ -525,13 +582,14 @@ class H5DataGenerator(object):
         # === 第3步：分割信息提取 ===
         # 从分割图像中提取每个点对应的物体ID
         # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
-        segment_img_int = np.array([])
-        if obj_num == 1:
-            segment_img_int = np.round(segment_img[:, :, 1] / step)
-        else:
-            segment_img_int = np.floor(segment_img[:, :, 1] * (obj_num - 1))
-        quotient, remainder = np.divmod(segment_img_int, 1)  # 物体ID
-        obj_ids = quotient[valid_mask].astype('int')  # 每个像素对应的物体ID
+        segment_img_int = np.round(segment_img[:, :, 1] / step)
+        obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
+        obj_ids =obj_ids.astype('int')  # 转换为整数类型
+
+        obj_valid_mask = []
+        if self.test_flag:
+            for i in [0, obj_num-1]:
+                obj_valid_mask.append(obj_ids == i)
         
         # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
@@ -539,12 +597,14 @@ class H5DataGenerator(object):
             raise ValueError('没有前景点，跳过当前场景！')
             
         # 情况1：点数不足，通过重复采样达到目标数量
+        cycle_num = 0
         if num_pnt <= self.target_num_point:
             t = int(1.0 * self.target_num_point / num_pnt) + 1
             points_tile = np.tile(points, [t, 1])  # 重复点云
             points = points_tile[:self.target_num_point]
             obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
-            obj_ids = obj_ids_tile[:self.target_num_point]          
+            obj_ids = obj_ids_tile[:self.target_num_point] 
+            cycle_num = t         
         # 情况2：点数过多，使用最远点采样(FPS)进行下采样
         elif num_pnt > self.target_num_point:
             # 转换为PyTorch张量并移到GPU（如果可用）
@@ -564,11 +624,17 @@ class H5DataGenerator(object):
         if individual_object_size_lable.size == 0:
             raise ValueError('尺寸标签文件为空！')
         
-        #计算obj_ids的最大最小值
+        # check code
+        # 计算obj_ids的最大最小值
         max_obj_id = int(np.max(obj_ids))
         min_obj_id = int(np.min(obj_ids))
-        if label_trans.shape[0] != (max_obj_id - min_obj_id + 1):
+        if label_trans.shape[0] != (max_obj_id + 1):
             raise ValueError('物体ID不连续，请检查输入数据！')
+        # 计算obj_ids每个整数值的点的个数
+        obj_id_point_num = []
+        for i in range(min_obj_id, max_obj_id+1):
+            obj_id_point_num.append(int(np.sum(obj_ids == i)))
+        print(f"循环次数：{cycle_num};物体ID点数分布：{obj_id_point_num}")
         
         # 根据采样后的点云，重新对齐所有标签数据
         # 建立物体ID到索引的映射
@@ -584,8 +650,6 @@ class H5DataGenerator(object):
             print("label_rot: ", label_rot)
             raise ValueError(f"物体ID {e} 在标签中未找到，请检查输入数据！")
                     
-
-            
         # === 第6步：法向量估计 ===
         # 构建Open3D点云对象用于法向量计算
         pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
@@ -660,7 +724,7 @@ class H5DataGenerator(object):
         suction_points_asort = suction_points[sorted_indices]
         suction_or_asort = suction_or[sorted_indices]
         # 打印最高分及该分数对应的点
-        print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
+        # print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
 
         # # 可视化最终排序后的吸取点
         # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points_asort))
@@ -691,7 +755,10 @@ class H5DataGenerator(object):
         # plt.xlabel("Value")
         # plt.ylabel("Frequency")
         # plt.show()
-
+        if self.test_flag:
+            
+            obj_score_list = []
+            
         # ------------------------------------------------------------------------------------step 5: save as h5 file
         # 保存所有点云、法线、分数等为h5格式
         with h5py.File(output_file_path,'w') as f:

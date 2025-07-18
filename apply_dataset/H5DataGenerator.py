@@ -450,11 +450,12 @@ class H5DataGenerator(object):
         suction_feasibility_scores = ~np.array(suction_feasibility_scores)
         return suction_feasibility_scores
     
-    def _cal_score_visibility(self, label):
+    def _cal_score_visibility(self, visibility_label, obj_ids):
         '''
         计算可见性评分，可见性评分用于定量反映场景中对象的被遮挡程度
         '''
-        return label
+        suction_visibility_scores = np.array([visibility_label[obj_ids[i]] for i in obj_ids])
+        return suction_visibility_scores
     
     def _cal_suction_score(self):
         '''
@@ -524,7 +525,12 @@ class H5DataGenerator(object):
         # === 第3步：分割信息提取 ===
         # 从分割图像中提取每个点对应的物体ID
         # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
-        quotient, remainder = np.divmod(segment_img[:, :, 1], step)  # 物体ID
+        segment_img_int = np.array([])
+        if obj_num == 1:
+            segment_img_int = np.round(segment_img[:, :, 1] / step)
+        else:
+            segment_img_int = np.floor(segment_img[:, :, 1] * (obj_num - 1))
+        quotient, remainder = np.divmod(segment_img_int, 1)  # 物体ID
         obj_ids = quotient[valid_mask].astype('int')  # 每个像素对应的物体ID
         
         # === 第4步：点云采样和标准化 ===
@@ -558,40 +564,28 @@ class H5DataGenerator(object):
         if individual_object_size_lable.size == 0:
             raise ValueError('尺寸标签文件为空！')
         
+        #计算obj_ids的最大最小值
+        max_obj_id = int(np.max(obj_ids))
+        min_obj_id = int(np.min(obj_ids))
+        if label_trans.shape[0] != (max_obj_id - min_obj_id + 1):
+            raise ValueError('物体ID不连续，请检查输入数据！')
+        
         # 根据采样后的点云，重新对齐所有标签数据
-        # 确保每个点都有对应的物体位姿、ID和尺寸信息
-        points_label_trans = np.array([])
-        points_label_rot = np.array([])
-        points_label_id = np.array([])
-        if label_trans.shape[0] == 1: # 1维
-            points_label_trans = label_trans[obj_ids]  # 物体位置对应到每个点
-            points_label_rot = label_rot[obj_ids]      # 物体旋转对应到每个点
-            points_label_id = label_id[obj_ids]        # 物体ID对应到每个点
-        # individual_object_size_lable = individual_object_size_lable[obj_ids]  # 尺寸标签对应到每个点
-        else: # 多维，即多个物体
-            # 查找点对应的物体ID，如果label_trans为n*3，则n为物体的id
-            # for i in obj_ids:
-            #     find_flag = False
-            #     for idx, value in enumerate(label_trans[:, 0]):
-            #         print(f"第{idx}个值: {value}")
-            #         if value == i:
-            #             points_label_trans = np.append(points_label_trans, label_trans[idx])
-            #             points_label_rot = np.append(points_label_rot, label_rot[idx])
-            #             points_label_id = np.append(points_label_id, label_id[idx])
-            #             find_flag = True
-            #             break
-            #     if not find_flag:
-            #         raise ValueError("物体ID对应失败！")
-            # 建立物体ID到索引的映射
-            id_to_idx = {int(value): idx for idx, value in enumerate(label_trans[:, 0])}
+        # 建立物体ID到索引的映射
+        try:
+            # obj_ids：每个点云中的点对应的id
 
             # 直接用obj_ids查找对应的标签
-            points_label_trans = np.array([label_trans[id_to_idx[i]] for i in obj_ids])
-            points_label_rot = np.array([label_rot[id_to_idx[i]] for i in obj_ids])
-            points_label_id = np.array([label_id[id_to_idx[i]] for i in obj_ids])
-                    
+            points_label_trans = np.array([label_trans[obj_ids[i]] for i in obj_ids])
+            points_label_rot = np.array([label_rot[obj_ids[i]] for i in obj_ids])
+            points_label_id = np.array([label_id[obj_ids[i]] for i in obj_ids])
+        except KeyError as e:
+            print("label_trans: ", label_trans)
+            print("label_rot: ", label_rot)
+            raise ValueError(f"物体ID {e} 在标签中未找到，请检查输入数据！")
                     
 
+            
         # === 第6步：法向量估计 ===
         # 构建Open3D点云对象用于法向量计算
         pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
@@ -654,7 +648,7 @@ class H5DataGenerator(object):
         score_collision = self._cal_score_collision(suction_points, suction_or)
 
         # 可见性评分
-        score_visibility = self._cal_score_visibility(individual_object_size_lable)
+        score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
 
         # 综合所有分数, 得到最终分数并排序
         score_all = score_seal * score_wrench * score_collision * score_visibility

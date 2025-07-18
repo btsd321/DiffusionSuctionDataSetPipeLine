@@ -45,6 +45,14 @@ parser.add_argument('--scene_list', type=str, required=True, help='场景编号�
 parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
 # 是否启用GPU加速渲染
 parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
+parser.add_argument('--save_img_type', type=str, default='png', choices=['exr', 'png'], 
+                    help='保存分割图像的格式: exr(高精度,慢) 或 png(快速mask,推荐)')
+parser.add_argument('--fast_mode', action='store_true', 
+                    help='启用快速模式：降低分辨率、减少采样等，用于快速预览')
+parser.add_argument('--disable_print', action='store_true', 
+                    help='禁用详细打印输出以提高性能')
+parser.add_argument('--headless', action='store_true', 
+                    help='强制无头渲染模式，避免OpenGL上下文问题（适用于WSL）')
 FLAGS = parser.parse_args()
 
 try:
@@ -149,6 +157,13 @@ class BlenderRenderClass:
         self.CAMERA_ROTATION = self.cam_info.cam_quaternions
         self.img_w = self.cam_info.intrinsic_matrix[0,2] * 2
         self.img_h = self.cam_info.intrinsic_matrix[1,2] * 2
+        
+        # 快速模式下降低分辨率
+        if FLAGS.fast_mode:
+            self.img_w = int(self.img_w * 0.5)  # 降低50%分辨率
+            self.img_h = int(self.img_h * 0.5)
+            print(f"快速模式：分辨率降至 {self.img_w}x{self.img_h}")
+            
         self.CAMERA_RESOLUTION = [int(self.img_w), int(self.img_h)]
         # self.DEPTH_DIVIDE = depth_graph_divide
         # self.DEPTH_LESS = depth_graph_less
@@ -159,21 +174,59 @@ class BlenderRenderClass:
             self.meshScale = [1, 1, 1]
 
     def set_device(self):
+        # WSL环境下强制使用CPU渲染避免EGL问题
+        if os.environ.get('WSL_DISTRO_NAME') or 'microsoft' in os.uname().release.lower():
+            bpy.context.scene.cycles.device = 'CPU'
+            print('检测到WSL环境，使用CPU渲染避免EGL问题')
+            return
+            
         if FLAGS.use_gpu:
-            bpy.context.scene.cycles.device = 'GPU'
-            prefs = bpy.context.preferences.addons['cycles'].preferences
-            prefs.compute_device_type = 'CUDA'
-            prefs.get_devices()
-            for device in prefs.devices:
-                if device.type == 'CUDA' or device.type == 'OPTIX':
-                    device.use = True
-            print('已启用NVIDIA GPU加速渲染')
+            try:
+                bpy.context.scene.cycles.device = 'GPU'
+                prefs = bpy.context.preferences.addons['cycles'].preferences
+                prefs.compute_device_type = 'CUDA'
+                prefs.get_devices()
+                for device in prefs.devices:
+                    if device.type == 'CUDA' or device.type == 'OPTIX':
+                        device.use = True
+                print('已启用NVIDIA GPU加速渲染')
+            except Exception as e:
+                print(f'GPU设置失败，回退到CPU渲染: {e}')
+                bpy.context.scene.cycles.device = 'CPU'
         else:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
 
     def camera_set(self):
-        bpy.data.scenes["Scene"].render.engine = "CYCLES"
+        # WSL环境检测和渲染引擎优化
+        is_wsl = os.environ.get('WSL_DISTRO_NAME') or 'microsoft' in os.uname().release.lower()
+        
+        # 针对mask生成优化渲染引擎选择
+        if FLAGS.save_img_type.lower() == 'png':
+            if is_wsl or FLAGS.headless:
+                if FLAGS.use_gpu:
+                    # WSL + GPU: 使用Cycles GPU渲染（CUDA不依赖OpenGL）
+                    bpy.data.scenes["Scene"].render.engine = "CYCLES"
+                    bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
+                    bpy.data.scenes["Scene"].cycles.aa_samples = 1
+                    bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
+                    print("WSL + GPU：使用Cycles GPU渲染，避免EGL问题")
+                else:
+                    # WSL + CPU: 使用WORKBENCH避免OpenGL问题
+                    bpy.data.scenes["Scene"].render.engine = "BLENDER_WORKBENCH"
+                    print("WSL + CPU：使用WORKBENCH引擎，避免EGL问题")
+            else:
+                # 正常环境使用EEVEE（最快）
+                bpy.data.scenes["Scene"].render.engine = "BLENDER_EEVEE_NEXT"
+                print("使用EEVEE引擎，适合快速mask生成")
+        else:
+            # EXR使用Cycles，保持高质量
+            bpy.data.scenes["Scene"].render.engine = "CYCLES"
+            bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
+            bpy.data.scenes["Scene"].cycles.aa_samples = 1
+            bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
+            print("使用Cycles引擎，保持高质量渲染")
+            
         bpy.data.scenes["Scene"].render.resolution_x = self.CAMERA_RESOLUTION[0]
         bpy.data.scenes["Scene"].render.resolution_y = self.CAMERA_RESOLUTION[1]
         bpy.data.scenes["Scene"].render.resolution_percentage = 100
@@ -186,9 +239,6 @@ class BlenderRenderClass:
         bpy.data.scenes["Scene"].render.pixel_aspect_x = 1.0
         bpy.data.scenes["Scene"].render.pixel_aspect_y = self.CAMERA_SENSOR_SIZE[1] * self.CAMERA_RESOLUTION[0] / \
                                                          self.CAMERA_RESOLUTION[1] / self.CAMERA_SENSOR_SIZE[0]
-        bpy.data.scenes["Scene"].cycles.progressive = "BRANCHED_PATH"
-        bpy.data.scenes["Scene"].cycles.aa_samples = 1
-        bpy.data.scenes["Scene"].cycles.preview_aa_samples = 1
        
         bpy.data.objects["Camera"].location = [self.cam_info.cam_translation_vector[0],
                                                self.cam_info.cam_translation_vector[1],
@@ -230,6 +280,8 @@ class BlenderRenderClass:
             instance = bpy.context.selected_objects[0]
             print(bpy.context.selected_objects)
             print(instance_index_)
+            if not FLAGS.disable_print:
+                print(f"导入物体: {obj_name[instance_index_]}, 索引: {instance_index_}")
             instance.pass_index = instance_index_
             instance.scale = [0.001, 0.001, 0.001]  # 设置缩放(毫米转米)
             instance.location = [pose[instance_index_][0], pose[instance_index_][1], pose[instance_index_][2]]
@@ -253,13 +305,37 @@ class BlenderRenderClass:
             render_layers = nodes.new("CompositorNodeRLayers")
             output_file_label = nodes.new("CompositorNodeOutputFile")
             output_file_label.base_path = segment_path
-            output_file_label.format.file_format = "OPEN_EXR"
-            output_file_label.format.color_mode = "RGB"
-            output_file_label.format.color_depth = '32'
+            
+            # 根据FLAGS.save_img_type设置输出格式
+            if FLAGS.save_img_type.lower() == 'png':
+                # PNG格式，适合快速保存mask
+                output_file_label.format.file_format = "PNG"
+                output_file_label.format.color_mode = "BW"  # 黑白模式，适合mask
+                output_file_label.format.color_depth = '8'   # 8位深度
+                output_file_label.format.compression = 15    # PNG压缩级别
+                print("使用PNG格式保存mask，渲染速度更快")
+            else:
+                # 默认EXR格式
+                output_file_label.format.file_format = "OPEN_EXR"
+                output_file_label.format.color_mode = "RGB"
+                output_file_label.format.color_depth = '32'
+                print("使用EXR格式保存分割图像")
+                
             links.new(render_layers.outputs['Image'], output_file_label.inputs['Image'])
         else:
             output_file_label = [n for n in nodes if n.type == 'OUTPUT_FILE'][0]
             output_file_label.base_path = segment_path
+            
+            # 更新现有节点的格式设置
+            if FLAGS.save_img_type.lower() == 'png':
+                output_file_label.format.file_format = "PNG"
+                output_file_label.format.color_mode = "BW"
+                output_file_label.format.color_depth = '8'
+                output_file_label.format.compression = 15
+            else:
+                output_file_label.format.file_format = "OPEN_EXR"
+                output_file_label.format.color_mode = "RGB"
+                output_file_label.format.color_depth = '32'
 
     # 定义物体的材质(如颜色), 并让所有物体指向同一个材质
     def label_graph(self, label_number):
@@ -270,39 +346,50 @@ class BlenderRenderClass:
                 # 清空物体的所有材质槽
                 if obj.data.materials:
                     obj.data.materials.clear()
-                    print("delet object  materials")
+                    # 减少打印输出，提高性能
+                    # print("delet object  materials")
        
         mymat = bpy.data.materials.get('mymat')
         if not mymat:
             mymat = bpy.data.materials.new('mymat')
             mymat.use_nodes = True
 
-        # 优化：仅首次创建材质时清空节点，后续复用已配置节点
+        # 优化：根据输出格式选择不同的材质配置
         nodes = mymat.node_tree.nodes
         links = mymat.node_tree.links
-        if len(nodes) < 2 or not any(n.type == 'EMISSION' for n in nodes):
-            for node in nodes:
-                nodes.remove(node)
-            # 配置颜色渐变节点
-            ColorRamp = nodes.new(type="ShaderNodeValToRGB")
-            ColorRamp.color_ramp.interpolation = 'LINEAR'
-            ColorRamp.color_ramp.color_mode = 'RGB'
-            ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
-            ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
-            ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
-            OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
-            Emission = nodes.new(type="ShaderNodeEmission")
-            Math = nodes.new(type="ShaderNodeMath")
-            Math.operation = "DIVIDE"
-            Math.inputs[1].default_value = label_number
-            # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
-            links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
-            links.new(Math.outputs[0], ColorRamp.inputs[0])
-            links.new(ColorRamp.outputs[0], Emission.inputs[0])
-            links.new(Emission.outputs[0], OutputMat.inputs[0])
+        
+        if FLAGS.save_img_type.lower() == 'png':
+            # PNG mask使用简化材质，只需纯白色
+            if len(nodes) < 2 or not any(n.type == 'EMISSION' for n in nodes):
+                for node in nodes:
+                    nodes.remove(node)
+                OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
+                Emission = nodes.new(type="ShaderNodeEmission")
+                # 直接设置为白色，简化计算
+                Emission.inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)  # 纯白色
+                links.new(Emission.outputs[0], OutputMat.inputs[0])
         else:
-            # 已有节点，直接复用，无需重建
-            pass
+            # EXR格式使用原来的复杂材质
+            if len(nodes) < 2 or not any(n.type == 'EMISSION' for n in nodes):
+                for node in nodes:
+                    nodes.remove(node)
+                # 配置颜色渐变节点
+                ColorRamp = nodes.new(type="ShaderNodeValToRGB")
+                ColorRamp.color_ramp.interpolation = 'LINEAR'
+                ColorRamp.color_ramp.color_mode = 'RGB'
+                ColorRamp.color_ramp.elements[0].color[:3] = [1.0, 0.0, 0.0]  # 红色
+                ColorRamp.color_ramp.elements[1].color[:3] = [1.0, 1.0, 0.0]  # 黄色
+                ObjectInfo = nodes.new(type="ShaderNodeObjectInfo")
+                OutputMat = nodes.new(type="ShaderNodeOutputMaterial")
+                Emission = nodes.new(type="ShaderNodeEmission")
+                Math = nodes.new(type="ShaderNodeMath")
+                Math.operation = "DIVIDE"
+                Math.inputs[1].default_value = label_number
+                # 连接ObjectInfo的Object Index输出（outputs[3]）到Math节点，实现分割标签的唯一性
+                links.new(ObjectInfo.outputs[3], Math.inputs[0])  # Object Index（pass_index）/最大值
+                links.new(Math.outputs[0], ColorRamp.inputs[0])
+                links.new(ColorRamp.outputs[0], Emission.inputs[0])
+                links.new(Emission.outputs[0], OutputMat.inputs[0])
 
         # 让所有网格对象都使用同一个材质
         objects = bpy.data.objects
@@ -337,6 +424,10 @@ class BlenderRenderClass:
                     # 只渲染rgb图, 速度较快
                     self.label_graph(len(obj_name) - 1)
                     bpy.ops.render.render()  # 执行渲染
+                    
+                    # 每个物体渲染后立即清理内存，防止内存累积
+                    if FLAGS.fast_mode:
+                        bpy.ops.outliner.orphans_purge(do_recursive=True)
                     
                 # 主动清理未使用的数据块和垃圾回收
                 bpy.ops.outliner.orphans_purge(do_recursive=True)

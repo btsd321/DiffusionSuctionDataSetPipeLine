@@ -9,28 +9,54 @@
 import os
 import sys
 import argparse
+import re
+
+def parse_range_or_single(input_str):
+    """
+    解析输入字符串，支持以下格式：
+    - 单个值: "5" -> [5]
+    - 区间: "[1,10]" -> [1,2,3,4,5,6,7,8,9,10]
+    - 列表: "{1,3,5}" -> [1,3,5]
+    """
+    input_str = input_str.strip()
+    
+    # 如果是区间格式 [start,end]
+    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
+    if range_match:
+        start, end = map(int, range_match.groups())
+        return list(range(start, end + 1))
+    
+    # 如果是列表格式 {1,3,5,7}
+    list_match = re.match(r'^\{(.+)\}$', input_str)
+    if list_match:
+        values_str = list_match.group(1)
+        return [int(x.strip()) for x in values_str.split(',')]
+    
+    # 如果是单个数字
+    if input_str.isdigit():
+        return [int(input_str)]
+    
+    # 如果都不匹配，抛出错误
+    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
+
 
 # 命令行参数解析
 parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 # 循环次数
-parser.add_argument('--cycle_num', type=int, default=100, help='循环次数')
+parser.add_argument('--cycle_list', type=int, default=100, help='循环次数')
 # 场景数量
-parser.add_argument('--scene_num', type=int, default=50, help='场景数量')
+parser.add_argument('--scene_list', type=int, default=50, help='场景数量')
 # 是否显示GUI界面
 parser.add_argument('--visualize', action='store_true', help='设置该参数则显示GUI界面')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录
 FILE_DIR = FLAGS.data_dir
-# 获取循环次数
-CYCLE_NUM = FLAGS.cycle_num
-# 获取场景数量
-SCENE_NUM = FLAGS.scene_num
 
-CYCLE_idx_list = range(0, CYCLE_NUM)  # 100个循环
-SCENE_idx_list = range(1, SCENE_NUM + 1)   # 每个循环50个场景
+CYCLE_idx_list = FLAGS.cycle_list
+SCENE_idx_list = FLAGS.scene_list   # 每个循环50个场景
 
 # OBJ文件夹路径及物体名称列表(部分物体被排除)
 OBJ_folder_path = os.path.join(FILE_DIR, "OBJ")
@@ -157,11 +183,9 @@ class GenerateSimulationResult:
 
     def generate_single_object(self):    
         # 生成单场景多物体的物理仿真结果
-        cycle_idx_list = CYCLE_idx_list
-        scene_idx_list = SCENE_idx_list
         
-        for cycle_id in cycle_idx_list:
-            for scene_id in scene_idx_list:
+        for cycle_id in CYCLE_idx_list:
+            for scene_id in SCENE_idx_list:
                 self.scene_init()
 
                 # 加载箱体的四个侧壁

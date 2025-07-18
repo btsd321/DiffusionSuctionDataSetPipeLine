@@ -460,6 +460,27 @@ class H5DataGenerator(object):
         计算抗扭矩评分，抗扭矩评分用于判断吸盘在特定姿势下是否无法抵抗重力
         '''
         # 计算吸取点的抗扭分数(考虑重力和吸盘姿态)
+        # 原算法
+        # k = 30
+        # radius = 0.01
+        # wrench_thre = k * radius * np.pi * np.sqrt(2)
+        # suction_wrench_scores = []
+        # for index_temp,suction_points_temp in enumerate(suction_points):
+        #     label_trans_temp = label_trans[index_temp]
+        #     suction_or_temp = suction_or[index_temp]
+        #     center = label_trans_temp
+        #     gravity = np.array([[0, 0, 1]], dtype=np.float32) * 9.8  # 重力方向
+        #     suction_axis = viewpoint_to_matrix_z(suction_or_temp)  # (3, 3)
+        #     suction2center = (center - suction_points_temp)[np.newaxis, :]
+        #     coord = np.matmul(suction2center, suction_axis)
+        #     gravity_proj = np.matmul(gravity, suction_axis)
+        #     torque_y = gravity_proj[0, 0] * coord[0, 2] - gravity_proj[0, 2] * coord[0, 0]
+        #     torque_x = -gravity_proj[0, 1] * coord[0, 2] + gravity_proj[0, 2] * coord[0, 1]
+        #     torque = np.sqrt(torque_x**2 + torque_y**2)
+        #     score = 1 - min(1, torque / wrench_thre)
+        #     suction_wrench_scores.append(score)
+        # suction_wrench_scores = np.array(suction_wrench_scores)
+        # 新算法
         k = 30
         radius = 0.01
         wrench_thre = k * radius * np.pi * np.sqrt(2)
@@ -479,6 +500,37 @@ class H5DataGenerator(object):
             score = 1 - min(1, torque / wrench_thre)
             suction_wrench_scores.append(score)
         suction_wrench_scores = np.array(suction_wrench_scores)
+        
+        # 定义参考向量，指向负Z轴方向（垂直向下，符合重力方向）
+        reference_vector = np.array([0, 0, -1])
+
+        # 计算法向量与参考向量的点积（向量内积）
+        dot_products = np.sum(suction_or * reference_vector, axis=1)
+
+        # 计算每个法向量的模长（向量长度）
+        norm_magnitudes = np.linalg.norm(suction_or, axis=1)
+        # 计算参考向量的模长
+        reference_magnitude = np.linalg.norm(reference_vector)
+
+        # 根据向量点积公式计算夹角的余弦值: cos(θ) = (a·b) / (|a|*|b|)
+        cos_angles = dot_products / (norm_magnitudes * reference_magnitude)
+
+        # 防止数值计算误差导致余弦值超出[-1, 1]范围
+        cos_angles = np.clip(cos_angles, -1.0, 1.0)
+
+        # 通过反余弦函数计算夹角（弧度制）
+        angles = np.arccos(cos_angles)
+
+        # 将弧度转换为角度制，便于理解和调试
+        angles_degrees = np.degrees(angles)
+
+        # 将角度映射到[0,1]权重区间：
+        # - 0度（完全垂直向下）→ 权重1.0
+        # - 90度（水平方向）→ 权重0.5  
+        # - 180度（完全垂直向上）→ 权重0.0
+        mapped_values = 1 - (angles_degrees / 180)
+
+        suction_wrench_scores *= mapped_values # 乘以权重
         return suction_wrench_scores
     
     def _cal_score_collision(self, suction_points, suction_or):
@@ -628,8 +680,6 @@ class H5DataGenerator(object):
         # 计算obj_ids的最大最小值
         max_obj_id = int(np.max(obj_ids))
         min_obj_id = int(np.min(obj_ids))
-        if label_trans.shape[0] != (max_obj_id + 1):
-            raise ValueError('物体ID不连续，请检查输入数据！')
         # 计算obj_ids每个整数值的点的个数
         obj_id_point_num = []
         for i in range(min_obj_id, max_obj_id+1):

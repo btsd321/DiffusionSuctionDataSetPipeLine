@@ -12,8 +12,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_num", "0",
-                "--scene_num", "50"
+                "--cycle_list", "0",
+                "--scene_list", "[1,50]",
                 // "--visualize"
             ]
         },
@@ -76,8 +76,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "0",
-                "--scene_list", "[25,50]",
+                "--cycle_list", "[0,1]",
+                "--scene_list", "[1,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file", "${workspaceFolder}/config/parameter.json",
 

@@ -39,6 +39,11 @@ import re
 import OpenEXR
 import Imath
 import numpy as np
+import gc
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from datetime import datetime
+import cv2
     
 # 导入H5数据生成器模块，包含所有数据处理的核心功能
 from H5DataGenerator import *
@@ -51,6 +56,7 @@ parser.add_argument('--cycle_list', type=str, required=True, help='循环编号�
 parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
 parser.add_argument('--parameter_file', type=str, default='parameter.json', help='数据生成器参数配置文件路径')
+parser.add_argument('--num_workers', type=int, default=4, help='线程池的工作线程数 (默认: 4，建议不超过GPU内存限制)')
 FLAGS = parser.parse_args()
 
 def parse_range_or_single(input_str):
@@ -112,73 +118,195 @@ def read_exr_to_numpy(filepath):
     img = np.stack([d.reshape(height, width) for d in data], axis=-1)
     return img
 
+# 线程安全的打印锁
+print_lock = threading.Lock()
+
+def thread_safe_print(message):
+    """线程安全的打印函数"""
+    with print_lock:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] {message}")
+
+def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
+    """
+    处理单个循环-场景组合，生成H5训练数据
+    
+    Args:
+        cycle_id (int): 循环编号
+        scene_id (int): 场景编号
+        data_generator_params (dict): H5数据生成器的参数配置
+        
+    Returns:
+        tuple: (cycle_id, scene_id, success, error_msg)
+    """
+    try:
+        thread_safe_print(f"开始处理循环 {cycle_id}，场景 {scene_id}")
+        
+        # 为每个线程创建独立的H5数据生成器实例，避免线程冲突
+        g = H5DataGenerator(
+            params_file_name=data_generator_params['parameter_file'], 
+            camera_info_file_name=data_generator_params['camera_info_file'], 
+            objs_path=data_generator_params['objs_path'],
+            target_num_point=16384,
+            test_flag=False
+        )
+        
+        # 1. 构建深度图像文件路径并加载
+        depth_image_path = os.path.join(
+            data_generator_params['depth_dir'], 
+            'cycle_{:0>4}'.format(cycle_id), 
+            "{:0>3}".format(scene_id), 
+            'Image0001.png'
+        )
+        depth_image = cv2.imread(depth_image_path, cv2.IMREAD_UNCHANGED)
+        if depth_image is None:
+            raise ValueError(f"无法读取深度图像文件: {depth_image_path}")
+    
+        # 2. 构建分割图像文件路径并加载
+        seg_img_path = os.path.join(
+            data_generator_params['segment_dir'], 
+            'cycle_{:0>4}'.format(cycle_id), 
+            "{:0>3}".format(scene_id), 
+            'Image0001.exr'
+        )
+        segment_image = read_exr_to_numpy(seg_img_path)
+
+        # 3. 构建真值标签文件路径
+        gt_file_path = os.path.join(
+            data_generator_params['gt_path'], 
+            'cycle_{:0>4}'.format(cycle_id), 
+            "{:0>3}".format(scene_id), 
+            '{:0>3}.csv'.format(scene_id)
+        )
+
+        # 4. 构建输出H5文件路径
+        out_cycle_dir = os.path.join(
+            data_generator_params['train_set_dir'], 
+            'cycle_{:0>4}'.format(cycle_id)
+        )
+        if not os.path.exists(out_cycle_dir):
+            os.makedirs(out_cycle_dir, exist_ok=True)
+        
+        output_h5_path = os.path.join(out_cycle_dir, "{:0>3}.h5".format(scene_id))
+
+        # 5. 构建单个物体尺寸标签文件路径
+        individual_object_size_path = os.path.join(
+            data_generator_params['individual_path'], 
+            'cycle_{:0>4}'.format(cycle_id), 
+            "{:0>3}".format(scene_id), 
+            '{:0>3}.csv'.format(scene_id)
+        )
+
+        # 6. 核心处理步骤：调用数据生成器处理当前场景
+        g.process_train_set(
+            depth_image, segment_image, gt_file_path, 
+            output_h5_path, individual_object_size_path
+        )
+        
+        thread_safe_print(f"✅ 完成处理循环 {cycle_id}，场景 {scene_id}")
+        gc.collect()  # 手动触发垃圾回收，防止内存泄漏
+        return (cycle_id, scene_id, True, None)
+        
+    except Exception as e:
+        error_msg = f"循环 {cycle_id}，场景 {scene_id} 处理失败: {str(e)}"
+        thread_safe_print(f"❌ {error_msg}")
+        return (cycle_id, scene_id, False, error_msg)
+
 if __name__ == "__main__":
+    import time
+    start_time = time.time()
+    
     # 解析循环和场景编号为整数列表
     CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
     SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
 
-    # 创建H5数据生成器实例，加载参数配置
-    # 该实例负责将多模态原始数据转换为标准化的H5训练数据
-    g = H5DataGenerator(params_file_name = FLAGS.parameter_file, 
-                        camera_info_file_name = FLAGS.camera_info_file, 
-                        objs_path = os.path.join(FLAGS.data_dir, 'OBJ'),
-                        target_num_point=16384,
-                        test_flag = False)
+    # 准备数据生成器参数配置
+    data_generator_params = {
+        'parameter_file': FLAGS.parameter_file,
+        'camera_info_file': FLAGS.camera_info_file,
+        'objs_path': os.path.join(FLAGS.data_dir, 'OBJ'),
+        'depth_dir': DEPTH_DIR,
+        'segment_dir': SEGMENT_DIR,
+        'gt_path': GT_PATH,
+        'train_set_dir': TRAIN_SET_DIR,
+        'individual_path': INDIVIDUA_PATH
+    }
     
-    # 外层循环：遍历所有指定的循环（数据批次）
+    # 生成所有循环-场景组合
+    tasks = []
     for cycle_id in CYCLE_idx_list:
-        # 为当前循环创建输出目录
-        out_cycle_dir = os.path.join(TRAIN_SET_DIR, 'cycle_{:0>4}'.format(cycle_id))
-        if not os.path.exists(out_cycle_dir):
-            os.mkdir(out_cycle_dir)
-      
-        # 内层循环：遍历当前循环下的所有场景
         for scene_id in SCENE_idx_list:
-            # 1. 构建深度图像文件路径并加载
-            # 深度图像用于重建3D点云，提供空间几何信息
-            depth_image_path = os.path.join(DEPTH_DIR, 'cycle_{:0>4}'.format(cycle_id), 
-                                          "{:0>3}".format(scene_id), 'Image0001.png')
-            depth_image = cv2.imread(depth_image_path, cv2.IMREAD_UNCHANGED)
-            if depth_image is None:
-                raise ValueError(f"无法读取深度图像文件: {depth_image_path}")
-        
-            # 2. 构建分割图像文件路径并加载
-            # 分割图像包含每个像素对应的物体ID，用于物体识别和分离
-            seg_img_path = os.path.join(SEGMENT_DIR, 'cycle_{:0>4}'.format(cycle_id), 
-                                       "{:0>3}".format(scene_id), 'Image0001.exr')
-
-            segment_image = read_exr_to_numpy(seg_img_path)
-
-            # 3. 构建真值标签文件路径
-            # GT文件包含每个物体在相机坐标系下的6D位姿（位置+旋转）
-            gt_file_path = os.path.join(GT_PATH, 'cycle_{:0>4}'.format(cycle_id), 
-                                       "{:0>3}".format(scene_id), '{:0>3}.csv'.format(scene_id))
-
-            # 4. 构建输出H5文件路径
-            # H5文件将包含处理后的训练数据：点云、法向量、各种评分等
-            output_h5_path = os.path.join(out_cycle_dir, "{:0>3}.h5".format(scene_id))
-
-            # 5. 可选数据路径（当前已注释）
-            # 稠密点云数据：用于更精细的几何分析（如果需要）
-            # dense_point_path = os.path.join(OBJ_PATH + '_{}'.format(obj_id), '_{}'.format(obj_id)+".ply")
-
-            # 单个物体的预计算抓取分数：用于KNN算法计算密封分数（如果需要）
-            # seal_path = os.path.join(FILE_DIR, 'OBJ' + '_{}'.format(obj_id), '_{}'.format(obj_id) + ".npz")
-
-            # 6. 构建单个物体尺寸标签文件路径
-            # 该文件包含每个物体的可见面积比例，用于评估吸取可行性
-            individual_object_size_path = os.path.join(INDIVIDUA_PATH, 'cycle_{:0>4}'.format(cycle_id), 
-                                                     "{:0>3}".format(scene_id), '{:0>3}.csv'.format(scene_id))
-
-            # 7. 核心处理步骤：调用数据生成器处理当前场景
-            # 该函数将整合所有输入数据，生成标准化的H5训练数据集
-            # 包括：点云生成、法向量估计、吸取评分计算、数据标准化等
-            data_folder_path = os.path.join(FLAGS.data_dir)
-            g.process_train_set(depth_image, segment_image, gt_file_path, 
-                              output_h5_path, individual_object_size_path)
-            
-            # 打印处理进度
-            print(f"已完成处理：循环 {cycle_id:04d}，场景 {scene_id:03d}")
+            tasks.append((cycle_id, scene_id))
     
-    print("所有训练数据集生成完成！")
+    total_tasks = len(tasks)
+    completed_tasks = 0
+    failed_tasks = []
+    
+    print(f"🔧 配置信息:")
+    print(f"   数据目录: {FLAGS.data_dir}")
+    print(f"   循环列表: {CYCLE_idx_list}")
+    print(f"   场景列表: {SCENE_idx_list}")
+    print(f"   工作线程数: {FLAGS.num_workers}")
+    print(f"   总任务数: {total_tasks}")
+    print()
+    
+    thread_safe_print(f"🚀 开始处理 {total_tasks} 个循环-场景组合，使用 {FLAGS.num_workers} 个工作线程")
+    
+    # 使用线程池并行处理
+    with ThreadPoolExecutor(max_workers=FLAGS.num_workers) as executor:
+        # 提交所有任务
+        future_to_task = {
+            executor.submit(process_single_cycle_scene, cycle_id, scene_id, data_generator_params): (cycle_id, scene_id)
+            for cycle_id, scene_id in tasks
+        }
+        
+        # 处理完成的任务
+        for future in as_completed(future_to_task):
+            cycle_id, scene_id = future_to_task[future]
+            try:
+                result_cycle_id, result_scene_id, success, error_msg = future.result()
+                completed_tasks += 1
+                
+                if success:
+                    # 计算进度
+                    progress = completed_tasks / total_tasks * 100
+                    thread_safe_print(f"📊 进度: {completed_tasks}/{total_tasks} ({progress:.1f}%) - 循环{result_cycle_id:04d}-场景{result_scene_id:03d}")
+                else:
+                    failed_tasks.append((result_cycle_id, result_scene_id, error_msg))
+                    
+            except Exception as e:
+                completed_tasks += 1
+                error_msg = f"任务执行异常: {str(e)}"
+                failed_tasks.append((cycle_id, scene_id, error_msg))
+                thread_safe_print(f"❌ 循环 {cycle_id}，场景 {scene_id} 执行异常: {e}")
+    
+    # 输出最终统计
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    
+    thread_safe_print(f"\n📈 处理完成统计:")
+    thread_safe_print(f"   总任务数: {total_tasks}")
+    thread_safe_print(f"   成功任务: {completed_tasks - len(failed_tasks)}")
+    thread_safe_print(f"   失败任务: {len(failed_tasks)}")
+    thread_safe_print(f"   总耗时: {elapsed_time:.2f} 秒 ({elapsed_time/60:.1f} 分钟)")
+    
+    if total_tasks > 0:
+        avg_time_per_task = elapsed_time / total_tasks
+        thread_safe_print(f"   平均每任务: {avg_time_per_task:.2f} 秒")
+    
+    if failed_tasks:
+        thread_safe_print(f"\n❌ 失败的任务列表:")
+        for cycle_id, scene_id, error_msg in failed_tasks:
+            thread_safe_print(f"   循环{cycle_id:04d}-场景{scene_id:03d}: {error_msg}")
+        
+        # 将失败的任务保存到文件
+        error_log_file = os.path.join(OUT_ROOT_DIR, 'generation_errors.txt')
+        with open(error_log_file, 'w', encoding='utf-8') as f:
+            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"失败任务数: {len(failed_tasks)}\n\n")
+            for cycle_id, scene_id, error_msg in failed_tasks:
+                f.write(f"循环{cycle_id:04d}-场景{scene_id:03d}: {error_msg}\n")
+        thread_safe_print(f"📝 失败任务已记录到: {error_log_file}")
+    else:
+        thread_safe_print(f"🎉 所有训练数据集生成完成！")
 

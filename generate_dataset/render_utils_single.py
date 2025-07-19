@@ -40,8 +40,8 @@ def parse_range_or_single(input_str):
 parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
-parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
-parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--cycle_list', type=str, default='1', help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--scene_list', type=str, default='1', help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
 # 是否启用GPU加速渲染
 parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
@@ -55,14 +55,80 @@ parser.add_argument('--headless', action='store_true',
                     help='强制无头渲染模式，避免OpenGL上下文问题（适用于WSL）')
 parser.add_argument('--ultra_fast', action='store_true', 
                     help='极速模式：最大化性能优化，适用于batch mask生成')
+parser.add_argument('--input_type', type=str, default='continuous_scences', choices=['discrete_scences', 'continuous_scences'],
+                    help='输入类型，discrete_scences表示输入为离散场景此时忽略cycle_list参数和scene_list参数，continuous_scences表示连续场景此时cycle_list参数和scene_list参数为循环次数和场景数量')
 FLAGS = parser.parse_args()
 
-try:
-    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
-    SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
-except ValueError as e:
-    print(f"参数解析错误: {e}")
-    sys.exit(1)
+# 失败的循环-场景列表（用于离散模式）
+failed_cycles_scenes = [
+    # [1, 34],
+    [3, 15],
+    [4, 35],
+    [4, 46],
+    [5, 33],
+    [6, 18],
+    [6, 40],
+    [6, 43],
+    [6, 50],
+    [7, 32],
+    [8, 16],
+    [8, 34],
+    [8, 38],
+    [8, 41],
+    [9, 47],
+    [10, 23],
+    [10, 49]
+]
+
+def generate_cycle_scene_lists(failed_list):
+    """
+    从失败的循环-场景列表生成CYCLE_idx_list和SCENE_idx_list
+    
+    Args:
+        failed_list (list): [[cycle, scene], ...] 格式的失败列表
+        
+    Returns:
+        tuple: (cycle_list, scene_list) 分别对应每个失败项的循环和场景列表
+    """
+    if not failed_list:
+        print("⚠️ 警告: failed_cycles_scenes 列表为空")
+        return [], []
+    
+    cycle_list = []
+    scene_list = []
+    
+    for cycle, scene in failed_list:
+        cycle_list.append(cycle)
+        scene_list.append(scene)
+    
+    print(f"📊 从失败列表生成的配对:")
+    print(f"   循环数量: {len(cycle_list)} 个")
+    print(f"   场景数量: {len(scene_list)} 个")
+    print(f"   循环范围: {min(cycle_list)} - {max(cycle_list)}")
+    print(f"   场景范围: {min(scene_list)} - {max(scene_list)}")
+    
+    # 显示前几个配对作为示例
+    print(f"📋 前5个循环-场景配对:")
+    for i, (cycle, scene) in enumerate(failed_list[:5]):
+        print(f"   [{i}]: 循环{cycle} -> 场景{scene}")
+    
+    if len(failed_list) > 5:
+        print(f"   ... 还有 {len(failed_list) - 5} 个配对")
+    
+    return cycle_list, scene_list
+
+if FLAGS.input_type == 'continuous_scences':
+    try:
+        CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
+        SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
+    except ValueError as e:
+        print(f"参数解析错误: {e}")
+        sys.exit(1)
+else:
+    # 离散场景模式：从失败列表生成循环-场景配对
+    CYCLE_idx_list, SCENE_idx_list = generate_cycle_scene_lists(failed_cycles_scenes)
+    print(f"🎯 离散场景模式: 将重新渲染 {len(CYCLE_idx_list)} 个失败的循环-场景配对")
+
 print("CYCLE_idx_list")
 print(CYCLE_idx_list )
 print("SCENE_idx_list")
@@ -386,60 +452,79 @@ class BlenderRenderClass:
     def render_scenes(self): 
         self.set_device()     
         self.camera_set()  # 设置相机参数  
-        for cycle_id in CYCLE_idx_list:
-            for scene_id in SCENE_idx_list:
-                print( 'cycle_id={} '.format(cycle_id)+'scene_id={}'.format(scene_id))
-                
-                csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
-                obj_names, pose, segment_indexs = self.read_csv(csv_path)
+        
+        # 检查是否为离散模式，如果是则使用配对方式处理
+        if FLAGS.input_type == 'discrete_scences':
+            if len(CYCLE_idx_list) != len(SCENE_idx_list):
+                raise ValueError(f"循环列表长度({len(CYCLE_idx_list)})与场景列表长度({len(SCENE_idx_list)})不匹配")
+            
+            # 离散模式：按配对处理
+            for i, (cycle_id, scene_id) in enumerate(zip(CYCLE_idx_list, SCENE_idx_list)):
+                print(f"🔄 处理第 {i+1}/{len(CYCLE_idx_list)} 个配对: 循环{cycle_id}-场景{scene_id}")
+                self.process_single_cycle_scene(cycle_id, scene_id)
+        else:
+            # 连续模式：原有的双重循环
+            for cycle_id in CYCLE_idx_list:
+                for scene_id in SCENE_idx_list:
+                    self.process_single_cycle_scene(cycle_id, scene_id)
 
-                for i in segment_indexs:
-                    obj_name = []
-                    obj_name.append(obj_names[i])
-                    self.import_obj(obj_names, pose, [i])  # 只导入当前物体
+        print('渲染完成!')
+        
+    def process_single_cycle_scene(self, cycle_id, scene_id):
+        """
+        处理单个循环-场景组合的渲染
+        """
+        print( 'cycle_id={} '.format(cycle_id)+'scene_id={}'.format(scene_id))
+        
+        csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
+        obj_names, pose, segment_indexs = self.read_csv(csv_path)
 
-                    segment_scene_path = os.path.join(OUTDIR_dir_segment_images, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id),"{:0>3}".format(scene_id)+"_{:0>3}".format(i))
-                    depth_scene_path = segment_scene_path # 实际未用到
-                    if not os.path.exists(depth_scene_path):
-                        os.makedirs(depth_scene_path)
-                    if not os.path.exists(segment_scene_path):
-                        os.makedirs(segment_scene_path)
+        for i in segment_indexs:
+            obj_name = []
+            obj_name.append(obj_names[i])
+            self.import_obj(obj_names, pose, [i])  # 只导入当前物体
+
+            segment_scene_path = os.path.join(OUTDIR_dir_segment_images, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id),"{:0>3}".format(scene_id)+"_{:0>3}".format(i))
+            depth_scene_path = segment_scene_path # 实际未用到
+            if not os.path.exists(depth_scene_path):
+                os.makedirs(depth_scene_path)
+            if not os.path.exists(segment_scene_path):
+                os.makedirs(segment_scene_path)
+            
+            self.depth_graph(depth_scene_path, segment_scene_path)  # 配置节点输出
+            # 只渲染rgb图, 速度较快
+            self.label_graph(len(obj_name) - 1)
+            
+            # 极速模式：禁用不必要的Blender功能
+            if FLAGS.ultra_fast:
+                try:
+                    bpy.context.scene.render.use_motion_blur = False
+                    bpy.context.scene.render.use_border = False
+                    bpy.context.scene.render.use_crop_to_border = False
+                    bpy.context.scene.cycles.use_denoising = False if hasattr(bpy.context.scene.cycles, 'use_denoising') else None
+                    # 禁用所有后处理，使用最简单的色彩空间
+                    bpy.context.scene.view_settings.view_transform = 'Standard'
+                    bpy.context.scene.sequencer_colorspace_settings.name = 'sRGB'
+                except Exception as e:
+                    print(f"极速模式设置遇到错误，忽略: {e}")
                     
-                    self.depth_graph(depth_scene_path, segment_scene_path)  # 配置节点输出
-                    # 只渲染rgb图, 速度较快
-                    self.label_graph(len(obj_name) - 1)
-                    
-                    # 极速模式：禁用不必要的Blender功能
-                    if FLAGS.ultra_fast:
-                        try:
-                            bpy.context.scene.render.use_motion_blur = False
-                            bpy.context.scene.render.use_border = False
-                            bpy.context.scene.render.use_crop_to_border = False
-                            bpy.context.scene.cycles.use_denoising = False if hasattr(bpy.context.scene.cycles, 'use_denoising') else None
-                            # 禁用所有后处理，使用最简单的色彩空间
-                            bpy.context.scene.view_settings.view_transform = 'Standard'
-                            bpy.context.scene.sequencer_colorspace_settings.name = 'sRGB'
-                        except Exception as e:
-                            print(f"极速模式设置遇到错误，忽略: {e}")
-                            
-                    # 使用try-catch保护渲染过程
-                    try:
-                        bpy.ops.render.render()  # 执行渲染
-                        print("渲染完成")
-                    except Exception as e:
-                        raise e
-                
-                    
-                    # 每个物体渲染后立即清理内存，防止内存累积
-                    if FLAGS.fast_mode or FLAGS.ultra_fast:
-                        bpy.ops.outliner.orphans_purge(do_recursive=True)
-                        # 极速模式：更频繁的内存清理
-                        if FLAGS.ultra_fast:
-                            gc.collect()
-                    
-                # 主动清理未使用的数据块和垃圾回收
+            # 使用try-catch保护渲染过程
+            try:
+                bpy.ops.render.render()  # 执行渲染
+                print("渲染完成")
+            except Exception as e:
+                raise e
+            
+            # 每个物体渲染后立即清理内存，防止内存累积
+            if FLAGS.fast_mode or FLAGS.ultra_fast:
                 bpy.ops.outliner.orphans_purge(do_recursive=True)
-                gc.collect()
+                # 极速模式：更频繁的内存清理
+                if FLAGS.ultra_fast:
+                    gc.collect()
+        
+        # 主动清理未使用的数据块和垃圾回收
+        bpy.ops.outliner.orphans_purge(do_recursive=True)
+        gc.collect()
 
 if __name__ == '__main__':
     import time

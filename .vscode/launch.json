@@ -12,8 +12,10 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "0",
-                "--scene_list", "[1,50]",
+                "--cycle_list", "6",
+                "--scene_list", "43",
+                "--input_type", "continuous_scences",
+                // "--input_type", "discrete_scences",
                 // "--visualize"
             ]
         },
@@ -25,11 +27,32 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "0",
-                "--scene_list", "[1,50]",
+                "--cycle_list", "10",
+                "--scene_list", "49",
                 "--use_gpu"
             ]
         },
+
+// failed_cycles_scenes = [
+//     [1, 34],
+//     [3, 15],
+//     [4, 35],
+//     [4, 46],
+//     [5, 33],
+//     [6, 18],
+//     [6, 40],
+//     [6, 43],
+//     [6, 50],
+//     [7, 32],
+//     [8, 16],
+//     [8, 34],
+//     [8, 38],
+//     [8, 41],
+//     [9, 47],
+//     [10, 23],
+//     [10, 49]
+// ]
+
         {
             "name": "generate_dataset: render_utils_single.py",
             "type": "debugpy",
@@ -38,10 +61,12 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[2,3]",
-                "--scene_list", "49",
+                "--cycle_list", "1",
+                "--scene_list", "34",
                 "--use_gpu",
                 "--disable_print",
+                // "--input_type", "continuous_scences",
+                "--input_type", "discrete_scences",
                 "--ultra_fast"
             ]
         },
@@ -83,6 +108,32 @@
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file", "${workspaceFolder}/config/parameter.json",
 
+            ]
+        },
+
+
+        {
+            "name": "tools: check_png.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/check_png.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "[0,10]",
+                "--scene_list", "[1,50]",
+            ]
+        },
+        {
+            "name": "tools: check_physics_utils.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/check_physics_utils.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list", "[0,10]",
+                "--scene_list", "[1,50]",
             ]
         }
     ]

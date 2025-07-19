@@ -45,18 +45,82 @@ parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 # 循环次数
-parser.add_argument('--cycle_list', type=int, default=100, help='循环次数')
+parser.add_argument('--cycle_list', type=str, default='100', help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 # 场景数量
-parser.add_argument('--scene_list', type=int, default=50, help='场景数量')
+parser.add_argument('--scene_list', type=str, default='50', help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 # 是否显示GUI界面
 parser.add_argument('--visualize', action='store_true', help='设置该参数则显示GUI界面')
+parser.add_argument('--input_type', type=str, default='continuous_scences', choices=['discrete_scences', 'continuous_scences'],help='输入类型，\
+                    discrete_scences表示输入为离散场景此时忽略cycle_list参数和scene_list参数，continuous_scences表示连续场景此时cycle_list参数和scene_list参数为循环次数和场景数量')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录
 FILE_DIR = FLAGS.data_dir
 
-CYCLE_idx_list = FLAGS.cycle_list
-SCENE_idx_list = FLAGS.scene_list   # 每个循环50个场景
+failed_cycles_scenes = [
+    [1, 34],
+    [3, 15],
+    [4, 35],
+    [4, 46],
+    [5, 33],
+    [6, 18],
+    [6, 40],
+    [6, 43],
+    [6, 50],
+    [7, 32],
+    [8, 16],
+    [8, 34],
+    [8, 38],
+    [8, 41],
+    [9, 47],
+    [10, 23],
+    [10, 49]
+]
+
+def generate_cycle_scene_lists(failed_list):
+    """
+    从失败的循环-场景列表生成CYCLE_idx_list和SCENE_idx_list
+    
+    Args:
+        failed_list (list): [[cycle, scene], ...] 格式的失败列表
+        
+    Returns:
+        tuple: (cycle_list, scene_list) 分别对应每个失败项的循环和场景列表
+    """
+    if not failed_list:
+        print("⚠️ 警告: failed_cycles_scenes 列表为空")
+        return [], []
+    
+    cycle_list = []
+    scene_list = []
+    
+    for cycle, scene in failed_list:
+        cycle_list.append(cycle)
+        scene_list.append(scene)
+    
+    print(f"📊 从失败列表生成的配对:")
+    print(f"   循环数量: {len(cycle_list)} 个")
+    print(f"   场景数量: {len(scene_list)} 个")
+    print(f"   循环范围: {min(cycle_list)} - {max(cycle_list)}")
+    print(f"   场景范围: {min(scene_list)} - {max(scene_list)}")
+    
+    # 显示前几个配对作为示例
+    print(f"📋 前5个循环-场景配对:")
+    for i, (cycle, scene) in enumerate(failed_list[:5]):
+        print(f"   [{i}]: 循环{cycle} -> 场景{scene}")
+    
+    if len(failed_list) > 5:
+        print(f"   ... 还有 {len(failed_list) - 5} 个配对")
+    
+    return cycle_list, scene_list
+
+if FLAGS.input_type == 'continuous_scences':
+    CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
+    SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)   # 每个循环50个场景
+else:
+    # 离散场景模式：从失败列表生成循环-场景配对
+    CYCLE_idx_list, SCENE_idx_list = generate_cycle_scene_lists(failed_cycles_scenes)
+    print(f"🎯 离散场景模式: 将重新生成 {len(CYCLE_idx_list)} 个失败的循环-场景配对")
 
 # OBJ文件夹路径及物体名称列表(部分物体被排除)
 OBJ_folder_path = os.path.join(FILE_DIR, "OBJ")
@@ -184,48 +248,73 @@ class GenerateSimulationResult:
     def generate_single_object(self):    
         # 生成单场景多物体的物理仿真结果
         
-        for cycle_id in CYCLE_idx_list:
-            for scene_id in SCENE_idx_list:
-                self.scene_init()
+        # 检查是否为离散模式，如果是则使用配对方式处理
+        if FLAGS.input_type == 'discrete_scences':
+            if len(CYCLE_idx_list) != len(SCENE_idx_list):
+                raise ValueError(f"循环列表长度({len(CYCLE_idx_list)})与场景列表长度({len(SCENE_idx_list)})不匹配")
+            
+            # 离散模式：按配对处理
+            for i, (cycle_id, scene_id) in enumerate(zip(CYCLE_idx_list, SCENE_idx_list)):
+                print(f"🔄 处理第 {i+1}/{len(CYCLE_idx_list)} 个配对: 循环{cycle_id}-场景{scene_id}")
+                self.process_single_cycle_scene(cycle_id, scene_id)
+        else:
+            # 连续模式：原有的双重循环
+            for cycle_id in CYCLE_idx_list:
+                for scene_id in SCENE_idx_list:
+                    self.process_single_cycle_scene(cycle_id, scene_id)
 
-                # 加载箱体的四个侧壁
-                cube_ind_1 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube1.urdf'), (0, self.box_length*0.5+self.box_thickness*0.5, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
-                cube_ind_2 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube1.urdf'), (0, -self.box_length*0.5-self.box_thickness*0.5, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
-                cube_ind_3 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube2.urdf'), (self.box_width*0.5+self.box_thickness*0.5, 0, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
-                cube_ind_4 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube2.urdf'), (-self.box_width*0.5-self.box_thickness*0.5, -0, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
-                
-                # 加载物体, 检查是否有物体超出箱体, 如果有则重新投放
-                while (1):
-                    flag = 0
-                    # 随机投放物体到箱体中
-                    multi_body_objects_first_layer, name_list = self.random_drop_objects_single(self.meshScale, scene_id)
-                    # 检查物体是否超出箱体
-                    for sparepart_id in multi_body_objects_first_layer:
-                        final_position, angle = pybullet.getBasePositionAndOrientation(sparepart_id)
-                        # 检查物体z坐标是否超出箱体高度或低于底部
-                        if((math.fabs(final_position[2]) >= self.box_height) or (final_position[2] < 0)):    
-                            flag = 1
-                    if flag == 1:
-                        for i in multi_body_objects_first_layer:
-                            pybullet.removeBody(i)
-                    if flag == 0:
-                        break
-                # 计算当前场景中实际投放的物体数量(即物理仿真后箱体内的物体个数)。
-                foreground_nums = len(multi_body_objects_first_layer)
-                # 生成一个索引列表，内容是 [0, 1, ..., foreground_nums-1]，用于标记每个物体的编号。
-                index_list = [i for i in range(foreground_nums)] 
-                # 断言实际投放的物体数量必须等于当前场景编号 scene_id(即本场景要求的物体数量)。如果不相等，程序会报错，说明仿真结果与预期不符。
-                assert foreground_nums == scene_id
-                
-                if self.show_GUI:
-                    for _ in range(100):
-                        pybullet.stepSimulation()
-                        time.sleep(1. / 240)
-                    pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 0)
+        print('The Simulation is finished!')
+        
+    def process_single_cycle_scene(self, cycle_id, scene_id):
+        """
+        处理单个循环-场景组合的物理仿真
+        """
+        self.scene_init()
 
-                # 保存仿真结果
-                self.save_results(cycle_id, scene_id, multi_body_objects_first_layer, index_list, name_list)
-                pybullet.disconnect()
+        # 加载箱体的四个侧壁
+        cube_ind_1 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube1.urdf'), (0, self.box_length*0.5+self.box_thickness*0.5, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
+        cube_ind_2 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube1.urdf'), (0, -self.box_length*0.5-self.box_thickness*0.5, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
+        cube_ind_3 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube2.urdf'), (self.box_width*0.5+self.box_thickness*0.5, 0, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
+        cube_ind_4 = pybullet.loadURDF(os.path.join(os.path.join(FILE_DIR, 'BOX'), 'cube2.urdf'), (-self.box_width*0.5-self.box_thickness*0.5, -0, self.box_height/2), pybullet.getQuaternionFromEuler([0, 0, 0]), useFixedBase=1)
+        
+        # 加载物体, 检查是否有物体超出箱体, 如果有则重新投放
+        while (1):
+            flag = 0
+            # 随机投放物体到箱体中
+            multi_body_objects_first_layer, name_list = self.random_drop_objects_single(self.meshScale, scene_id)
+            # 检查物体是否超出箱体
+            for sparepart_id in multi_body_objects_first_layer:
+                final_position, angle = pybullet.getBasePositionAndOrientation(sparepart_id)
+                # 检查物体z坐标是否超出箱体高度或低于底部
+                if((math.fabs(final_position[2]) >= self.box_height) or (final_position[2] < 0)):    
+                    flag = 1
+                # 检查物体x坐标是否超出箱体宽度范围
+                if(math.fabs(final_position[0]) >= (self.box_width / 2 + 0.3)):
+                    flag = 1
+                # 检查物体y坐标是否超出箱体长度范围
+                if(math.fabs(final_position[1]) >= (self.box_length / 2 + 0.3)):
+                    flag = 1
+            if flag == 1:
+                for i in multi_body_objects_first_layer:
+                    pybullet.removeBody(i)
+            if flag == 0:
+                break
+        # 计算当前场景中实际投放的物体数量(即物理仿真后箱体内的物体个数)。
+        foreground_nums = len(multi_body_objects_first_layer)
+        # 生成一个索引列表，内容是 [0, 1, ..., foreground_nums-1]，用于标记每个物体的编号。
+        index_list = [i for i in range(foreground_nums)] 
+        # 断言实际投放的物体数量必须等于当前场景编号 scene_id(即本场景要求的物体数量)。如果不相等，程序会报错，说明仿真结果与预期不符。
+        assert foreground_nums == scene_id
+        
+        if self.show_GUI:
+            for _ in range(100):
+                pybullet.stepSimulation()
+                time.sleep(1. / 240)
+            pybullet.configureDebugVisualizer(pybullet.COV_ENABLE_RENDERING, 0)
+
+        # 保存仿真结果
+        self.save_results(cycle_id, scene_id, multi_body_objects_first_layer, index_list, name_list)
+        pybullet.disconnect()
 
         print('The Simulation is finished!')      
 

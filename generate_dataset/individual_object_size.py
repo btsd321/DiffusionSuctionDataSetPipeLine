@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 from matplotlib.font_manager import FontProperties
 import OpenEXR
 import Imath
+import cv2
+import utils
 
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 
@@ -41,20 +43,40 @@ def read_exr_to_numpy(filepath):
     img = np.stack([d.reshape(height, width) for d in data], axis=-1)
     return img
 
-def parse_range_or_single(input_str):
-    input_str = input_str.strip()
-    range_match = re.match(r'^\[(\d+),(\d+)\]$', input_str)
-    if range_match:
-        start, end = map(int, range_match.groups())
-        return list(range(start, end + 1))
-    list_match = re.match(r'^\{(.+)\}$', input_str)
-    if list_match:
-        values_str = list_match.group(1)
-        return [int(x.strip()) for x in values_str.split(',')]
-    if input_str.isdigit():
-        return [int(input_str)]
-    raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
-
+def read_png_to_numpy(filepath):
+    """
+    使用OpenCV读取PNG文件并转换为mask数组。
+    """
+    # 读取PNG图像
+    png_file = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+    
+    if png_file is None:
+        raise ValueError(f"无法读取PNG文件: {filepath}")
+    
+    # 如果是单通道图像(灰度图)，直接作为mask
+    if len(png_file.shape) == 2:
+        mask = png_file
+    # 如果是多通道图像，转换为灰度图
+    elif len(png_file.shape) == 3:
+        if png_file.shape[2] == 3:  # RGB图像
+            mask = cv2.cvtColor(png_file, cv2.COLOR_BGR2GRAY)
+        elif png_file.shape[2] == 4:  # RGBA图像
+            mask = cv2.cvtColor(png_file, cv2.COLOR_BGRA2GRAY)
+        else:
+            # 其他情况，取第一个通道
+            mask = png_file[:, :, 0]
+    else:
+        raise ValueError(f"不支持的图像格式: {png_file.shape}")
+    
+    # 将mask转换为float32格式，并归一化到0-1范围
+    mask = mask.astype(np.float32)
+    if mask.max() > 1.0:
+        mask = mask / 255.0
+    
+    # 生成二值mask：大于0.5的像素为True，其余为False
+    mask = mask > 0.5
+    
+    return mask
 
 # 命令行参数解析
 parser = argparse.ArgumentParser()
@@ -67,8 +89,8 @@ FLAGS = parser.parse_args()
 # 获取数据集根目录
 FILE_DIR = FLAGS.data_dir
 # 获取循环和场景列表
-cycle_list = parse_range_or_single(FLAGS.cycle_list)
-scene_list = parse_range_or_single(FLAGS.scene_list)
+cycle_list = utils.parse_range_or_single(FLAGS.cycle_list)
+scene_list = utils.parse_range_or_single(FLAGS.scene_list)
 
 
 # 分割图像的存储路径
@@ -116,19 +138,19 @@ def render_scenes():
             areas_id = []  # 存储每个物体的面积比例
             for i in range(scene_id):
                 # 读取当前物体的单独分割图像
-                image_id = read_exr_to_numpy(
+                mask_id = read_png_to_numpy(
                     os.path.join(
                         OUTDIR_dir_segment_images_single,
                         'cycle_{:0>4}'.format(cycle_id),
                         "{:0>3}".format(scene_id),
                         "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
-                        'Image0001.exr'
+                        'Image0001.png'
                     )
                 )
                 # 获取当前物体的掩码(第三通道为1的位置为当前物体)
                 # mask_id = image_id[:,:, 2] = 1
                 # mask_id = (image_id[:,:, 1] >= 0.0) & (image_id[:,:, 0] <= 1 / scene_id + 0.00000001)
-                mask_id = (image_id[:,:, 1] < 0.05) & (image_id[:,:, 0] > 0.5)
+                # mask_id = (image_id[:,:, 1] < 0.05) & (image_id[:,:, 0] > 0.5)
 
                 # 获取所有物体的掩码中属于当前物体的部分
                 mask_ids = mask_ids_all == i
@@ -160,7 +182,7 @@ def render_scenes():
                 # plt.tight_layout()
                 # plt.show()
 
-                if exposed_pixels_single * 1.5 < exposed_pixels:
+                if int(exposed_pixels_single) * 1.5 < int(exposed_pixels):
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
                     axs[0].imshow(mask_id, cmap='gray')
                     axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
@@ -228,3 +250,56 @@ if __name__ == '__main__':
     start_time = time.time()
     render_scenes()
     print(time.time() - start_time)
+    
+    # # 测试PNG读取函数
+    # test_file = "/home/lixinlong/Data/Diffusion_Suction_DataSet/segment_images_single/cycle_0002/049/049_000/Image0001.png"
+    
+    # print(f"正在读取文件: {test_file}")
+    
+    # try:
+    #     # 读取PNG mask
+    #     mask = read_png_to_numpy(test_file)
+        
+    #     print(f"读取成功!")
+    #     print(f"Mask形状: {mask.shape}")
+    #     print(f"Mask数据类型: {mask.dtype}")
+    #     print(f"Mask取值范围: {mask.min()} ~ {mask.max()}")
+    #     print(f"True像素数: {np.sum(mask)}")
+    #     print(f"False像素数: {np.sum(~mask)}")
+    #     print(f"总像素数: {mask.size}")
+        
+    #     # 可视化mask
+    #     plt.figure(figsize=(12, 5))
+        
+    #     # 原始读取的图像（用于对比）
+    #     plt.subplot(1, 2, 1)
+    #     original_img = cv2.imread(test_file, cv2.IMREAD_UNCHANGED)
+    #     if original_img is not None:
+    #         if len(original_img.shape) == 3:
+    #             original_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB)
+    #         plt.imshow(original_img, cmap='gray')
+    #         plt.title('原始PNG图像', fontproperties=font)
+    #     else:
+    #         plt.text(0.5, 0.5, '无法显示原始图像', ha='center', va='center')
+    #         plt.title('原始PNG图像 (读取失败)', fontproperties=font)
+    #     plt.axis('off')
+        
+    #     # 处理后的二值mask
+    #     plt.subplot(1, 2, 2)
+    #     plt.imshow(mask, cmap='gray')
+    #     plt.title(f'二值Mask\n(True: {np.sum(mask)}, False: {np.sum(~mask)})', fontproperties=font)
+    #     plt.axis('off')
+        
+    #     plt.tight_layout()
+    #     plt.show()
+        
+    #     # 显示mask的统计信息
+    #     print("\n=== Mask统计信息 ===")
+    #     print(f"图像尺寸: {mask.shape[1]} x {mask.shape[0]}")
+    #     print(f"前景像素比例: {np.sum(mask) / mask.size * 100:.2f}%")
+    #     print(f"背景像素比例: {np.sum(~mask) / mask.size * 100:.2f}%")
+        
+    # except Exception as e:
+    #     print(f"读取PNG文件时发生错误: {e}")
+    #     import traceback
+    #     traceback.print_exc()

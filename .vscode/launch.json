@@ -14,8 +14,8 @@
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
                 "--cycle_list", "6",
                 "--scene_list", "43",
-                "--input_type", "continuous_scences",
-                // "--input_type", "discrete_scences",
+                // "--input_type", "continuous_scences",
+                "--input_type", "discrete_scences",
                 // "--visualize"
             ]
         },
@@ -27,10 +27,13 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "10",
-                "--scene_list", "49",
+                "--cycle_list", "[17,20]",
+                "--scene_list", "[1,50]",  // 只测试一个场景
                 "--use_gpu"
-            ]
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"  // 确保CUDA设备可见
+            }
         },
         {
             "name": "generate_dataset: render_utils_single.py",
@@ -40,8 +43,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "1",
-                "--scene_list", "34",
+                "--cycle_list", "[11,20]",
+                "--scene_list", "[1,50]",
                 "--use_gpu",
                 "--disable_print",
                 "--input_type", "continuous_scences",
@@ -57,7 +60,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,10]",
+                "--cycle_list", "[11,20]",
                 "--scene_list", "[1,50]",
             ]
         },
@@ -69,7 +72,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,10]",
+                "--cycle_list", "[11,20]",
                 "--scene_list", "[1,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
             ]
@@ -82,8 +85,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "9",
-                "--scene_list", "1",
+                "--cycle_list", "[11,20]",
+                "--scene_list", "[1,50]",
                 "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file", "${workspaceFolder}/config/parameter.json",
 
@@ -99,7 +102,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,10]",
+                "--cycle_list", "[11,20]",
                 "--scene_list", "[1,50]",
             ]
         },
@@ -111,7 +114,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[0,10]",
+                "--cycle_list", "[11,20]",
                 "--scene_list", "[1,50]",
             ]
         }

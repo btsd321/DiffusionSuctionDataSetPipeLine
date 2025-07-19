@@ -681,14 +681,14 @@ class H5DataGenerator(object):
             raise ValueError('尺寸标签文件为空！')
         
         # check code
-        # 计算obj_ids的最大最小值
-        max_obj_id = int(np.max(obj_ids))
-        min_obj_id = int(np.min(obj_ids))
-        # 计算obj_ids每个整数值的点的个数
-        obj_id_point_num = []
-        for i in range(min_obj_id, max_obj_id+1):
-            obj_id_point_num.append(int(np.sum(obj_ids == i)))
-        print(f"循环次数：{cycle_num};物体ID点数分布：{obj_id_point_num}")
+        # # 计算obj_ids的最大最小值
+        # max_obj_id = int(np.max(obj_ids))
+        # min_obj_id = int(np.min(obj_ids))
+        # # 计算obj_ids每个整数值的点的个数
+        # obj_id_point_num = []
+        # for i in range(min_obj_id, max_obj_id+1):
+        #     obj_id_point_num.append(int(np.sum(obj_ids == i)))
+        # print(f"循环次数：{cycle_num};物体ID点数分布：{obj_id_point_num}")
         
         # 根据采样后的点云，重新对齐所有标签数据
         # 建立物体ID到索引的映射

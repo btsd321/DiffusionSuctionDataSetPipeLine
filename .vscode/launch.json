@@ -32,27 +32,6 @@
                 "--use_gpu"
             ]
         },
-
-// failed_cycles_scenes = [
-//     [1, 34],
-//     [3, 15],
-//     [4, 35],
-//     [4, 46],
-//     [5, 33],
-//     [6, 18],
-//     [6, 40],
-//     [6, 43],
-//     [6, 50],
-//     [7, 32],
-//     [8, 16],
-//     [8, 34],
-//     [8, 38],
-//     [8, 41],
-//     [9, 47],
-//     [10, 23],
-//     [10, 49]
-// ]
-
         {
             "name": "generate_dataset: render_utils_single.py",
             "type": "debugpy",
@@ -65,8 +44,8 @@
                 "--scene_list", "34",
                 "--use_gpu",
                 "--disable_print",
-                // "--input_type", "continuous_scences",
-                "--input_type", "discrete_scences",
+                "--input_type", "continuous_scences",
+                // "--input_type", "discrete_scences",
                 "--ultra_fast"
             ]
         },
@@ -78,8 +57,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[2,3]",
-                "--scene_list", "50",
+                "--cycle_list", "[0,10]",
+                "--scene_list", "[1,50]",
             ]
         },
         {

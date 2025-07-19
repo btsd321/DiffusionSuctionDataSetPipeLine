@@ -12,7 +12,7 @@ import sys
 import re
 import argparse
 import csv
-import json
+import gc
 import numpy as np
 import shutil
 from math import radians
@@ -23,6 +23,9 @@ import OpenEXR
 import Imath
 import cv2
 import utils
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from datetime import datetime
 
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 
@@ -84,6 +87,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
 parser.add_argument('--cycle_list', type=str, required=True, help='循环编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 parser.add_argument('--scene_list', type=str, required=True, help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
+parser.add_argument('--num_workers', type=int, default=8, help='线程池的工作线程数 (默认: 8)')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录
@@ -102,154 +106,197 @@ individual_object_size =  os.path.join(FILE_DIR, 'individual_object_size')
 if not os.path.exists(individual_object_size):
     os.makedirs(individual_object_size)
 
+# 线程安全的打印锁
+print_lock = threading.Lock()
+
+def thread_safe_print(message):
+    """线程安全的打印函数"""
+    with print_lock:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[{timestamp}] {message}")
+
+def process_single_cycle_scene(cycle_id, scene_id):
+    """
+    处理单个循环-场景组合，计算每个物体的面积比例
+    
+    Args:
+        cycle_id (int): 循环编号
+        scene_id (int): 场景编号
+        
+    Returns:
+        tuple: (cycle_id, scene_id, success, error_msg)
+    """
+    try:
+        thread_safe_print(f"开始处理循环 {cycle_id}，场景 {scene_id}")
+        
+        # 读取当前循环和场景下的多物体分割图像(EXR格式, 包含ID信息)
+        image_ids = read_exr_to_numpy(
+            os.path.join(
+                OUTDIR_dir_segment_images,
+                'cycle_{:0>4}'.format(cycle_id),
+                "{:0>3}".format(scene_id),
+                'Image0001.exr'
+            )
+        )
+        
+        # 计算所有物体的掩码id
+        step = 1 / scene_id
+        mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
+        valid_mask = image_ids[:,:,0] >= 0.5
+        quotient, remainder = np.divmod(image_ids[:,:,1], step)
+        mask_ids_all[valid_mask] = quotient[valid_mask]
+
+        areas_id = []  # 存储每个物体的面积比例
+        for i in range(scene_id):
+            # 读取当前物体的单独分割图像
+            mask_id = read_png_to_numpy(
+                os.path.join(
+                    OUTDIR_dir_segment_images_single,
+                    'cycle_{:0>4}'.format(cycle_id),
+                    "{:0>3}".format(scene_id),
+                    "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
+                    'Image0001.png'
+                )
+            )
+
+            # 获取所有物体的掩码中属于当前物体的部分
+            mask_ids = mask_ids_all == i
+
+            # 计算物体在多物体场景下暴露在外的像素和
+            exposed_pixels = np.sum(mask_ids)
+
+            # 计算物体在单物体场景下暴露在外的像素和
+            exposed_pixels_single = np.sum(mask_id)
+
+            # 计算交集
+            intersection = np.sum(mask_id & mask_ids)
+
+            if exposed_pixels_single == 0:
+                thread_safe_print(f"循环 {cycle_id}，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 跳过面积比例计算")
+                areas_id.append(0)
+                raise ValueError(f"循环 {cycle_id}，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 无法计算面积比例")
+            else:
+                proportion = intersection / exposed_pixels_single
+                areas_id.append(proportion)
+                # 只在比例异常时打印详细信息
+                if proportion < 0.1 or proportion > 1.1:
+                    thread_safe_print(f"⚠️ 循环 {cycle_id}，场景 {scene_id} 中：物体 {i} 面积比例异常: {proportion:.4f}")
+
+        # 构建当前循环和场景的保存路径
+        save_path = os.path.join(
+            individual_object_size,
+            'cycle_{:0>4}'.format(cycle_id),
+            "{:0>3}".format(scene_id)
+        )
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        file_loc = save_path + '/' + '{:0>3}'.format(scene_id) + '.csv'
+        assert len(areas_id) == scene_id  # 检查每个场景的物体数量一致
+        
+        # 将面积比例写入csv文件
+        with open(file_loc, 'w', newline='') as f:
+            f_csv = csv.writer(f)
+            f_csv.writerow(areas_id)
+            
+        thread_safe_print(f"✅ 完成处理循环 {cycle_id}，场景 {scene_id}")
+        gc.collect()  # 释放内存
+        return (cycle_id, scene_id, True, None)
+        
+    except Exception as e:
+        error_msg = f"循环 {cycle_id}，场景 {scene_id} 处理失败: {str(e)}"
+        thread_safe_print(f"❌ {error_msg}")
+        return (cycle_id, scene_id, False, error_msg)
+
 
 
 def render_scenes():
     """
-    遍历所有循环和场景, 计算每个场景中每个物体的单独面积比例, 并保存为csv文件。
+    使用线程池遍历所有循环和场景，计算每个场景中每个物体的单独面积比例，并保存为csv文件。
     """
+    # 生成所有循环-场景组合
+    tasks = []
     for cycle_id in cycle_list:
         for scene_id in scene_list:
-            # 读取当前循环和场景下的多物体分割图像(EXR格式, 包含ID信息)
-            image_ids = read_exr_to_numpy(
-                os.path.join(
-                    OUTDIR_dir_segment_images,
-                    'cycle_{:0>4}'.format(cycle_id),
-                    "{:0>3}".format(scene_id),
-                    'Image0001.exr'
-                )
-            )
-            # 计算所有物体的掩码id(通过分割图像的第二通道归一化得到)
-            # mask_ids_all = np.round(image_ids[:,:, 1] * (scene_id - 1)).astype('int')
-            # 先将image_ids[:,:, 1]中偏小的值全部置为0.0
-            step = 1 / scene_id
-            mask_ids_all = np.full(image_ids[:,:,1].shape, 255, dtype=np.float32)
-            valid_mask = image_ids[:,:,0] >= 0.5
-            quotient, remainder = np.divmod(image_ids[:,:,1], step)
-            mask_ids_all[valid_mask] = quotient[valid_mask]
-
-            # 可视化
-            # plt.figure()
-            # plt.imshow(mask_ids_all, cmap='tab20')
-            # plt.title(f"mask_ids_all for scene {scene_id}")
-            # plt.colorbar()
-            # plt.show()
-
-            areas_id = []  # 存储每个物体的面积比例
-            for i in range(scene_id):
-                # 读取当前物体的单独分割图像
-                mask_id = read_png_to_numpy(
-                    os.path.join(
-                        OUTDIR_dir_segment_images_single,
-                        'cycle_{:0>4}'.format(cycle_id),
-                        "{:0>3}".format(scene_id),
-                        "{:0>3}".format(scene_id) + "_{:0>3}".format(i),
-                        'Image0001.png'
-                    )
-                )
-                # 获取当前物体的掩码(第三通道为1的位置为当前物体)
-                # mask_id = image_id[:,:, 2] = 1
-                # mask_id = (image_id[:,:, 1] >= 0.0) & (image_id[:,:, 0] <= 1 / scene_id + 0.00000001)
-                # mask_id = (image_id[:,:, 1] < 0.05) & (image_id[:,:, 0] > 0.5)
-
-                # 获取所有物体的掩码中属于当前物体的部分
-                mask_ids = mask_ids_all == i
-
-                # 计算物体在多物体场景下暴露在外的像素和
-                exposed_pixels = np.sum(mask_ids)
-
-                # 计算物体在单物体场景下暴露在外的像素和
-                exposed_pixels_single = np.sum(mask_id)
-
-                # 计算交集
-                intersection = np.sum(mask_id & mask_ids)
-
-                # fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                # axs[0].imshow(mask_id, cmap='gray')
-                # axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
-                # axs[1].imshow(mask_ids, cmap='gray')
-                # axs[1].set_title(f"mask_ids (多物体分割ID=={i})", fontproperties=font)
-                # # 叠加显示，两者都为True的像素显示为红色
-                # overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
-                # overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
-                # overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
-                # overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
-                # axs[2].imshow(overlay)
-                # axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids", fontproperties=font)
-                # for ax in axs:
-                #     ax.axis('off')
-                # plt.suptitle(f"scene {scene_id}, object {i}", fontproperties=font)
-                # plt.tight_layout()
-                # plt.show()
-
-                if int(exposed_pixels_single) * 1.5 < int(exposed_pixels):
-                    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(mask_id, cmap='gray')
-                    axs[0].set_title(f"mask_id (单物体掩码)", fontproperties=font)
-                    axs[1].imshow(mask_ids, cmap='gray')
-                    axs[1].set_title(f"mask_ids (多物体分割ID=={i})", fontproperties=font)
-                    # 叠加显示，两者都为True的像素显示为红色
-                    overlay = np.zeros((*mask_id.shape, 3), dtype=np.float32)
-                    overlay[mask_id & mask_ids] = [1, 0, 0]  # 红色
-                    overlay[mask_id & ~mask_ids] = [0, 1, 0] # 绿色
-                    overlay[~mask_id & mask_ids] = [0, 0, 1] # 蓝色
-                    axs[2].imshow(overlay)
-                    axs[2].set_title("重叠区域: 红=都为True, 绿=仅mask_id, 蓝=仅mask_ids", fontproperties=font)
-                    for ax in axs:
-                        ax.axis('off')
-                    plt.suptitle(f"scene {scene_id}, object {i}", fontproperties=font)
-                    plt.tight_layout()
-                    plt.show()
-
-                if exposed_pixels_single == 0:
-                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 跳过面积比例计算")
-                    areas_id.append(0)
-                    raise ValueError(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数为0, 无法计算面积比例")
+            tasks.append((cycle_id, scene_id))
+    
+    total_tasks = len(tasks)
+    completed_tasks = 0
+    failed_tasks = []
+    
+    thread_safe_print(f"🚀 开始处理 {total_tasks} 个循环-场景组合，使用 {FLAGS.num_workers} 个工作线程")
+    
+    # 使用线程池并行处理
+    with ThreadPoolExecutor(max_workers=FLAGS.num_workers) as executor:
+        # 提交所有任务
+        future_to_task = {
+            executor.submit(process_single_cycle_scene, cycle_id, scene_id): (cycle_id, scene_id)
+            for cycle_id, scene_id in tasks
+        }
+        
+        # 处理完成的任务
+        for future in as_completed(future_to_task):
+            cycle_id, scene_id = future_to_task[future]
+            try:
+                result_cycle_id, result_scene_id, success, error_msg = future.result()
+                completed_tasks += 1
+                
+                if success:
+                    # 计算进度
+                    progress = completed_tasks / total_tasks * 100
+                    thread_safe_print(f"📊 进度: {completed_tasks}/{total_tasks} ({progress:.1f}%) - 循环{result_cycle_id}-场景{result_scene_id}")
                 else:
-                    proportion = intersection / exposed_pixels_single
-                    areas_id.append(proportion)
-                    print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: {proportion:.4f}")
-
-                # # 只保留当前物体的掩码区域(排除背景或其他物体)
-                # mask_ids[image_ids[:,:, 2] != 1] = 0
-
-                # mask_only = np.sum(mask_id)
-                # mask_in_scence =  np.sum(mask_ids)
-                # if mask_only != 0:
-                #     # 计算当前物体的面积比例 = 多物体分割中该物体像素数 / 单物体分割中该物体像素数
-                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数: {mask_in_scence}")
-                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的单物体掩码像素数: {mask_only}")
-                #     if mask_in_scence == 0:
-                #         print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数为0, 跳过面积比例计算")
-                #         raise ValueError(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 的多物体掩码像素数为0, 无法计算面积比例")
-                #     proportion = np.sum(mask_ids) / np.sum(mask_id)
-                #     areas_id.append(proportion)
-                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: {proportion:.4f}")
-                # else:
-                #     # 若单物体掩码为0, 则面积比例为0
-                #     areas_id.append(0)
-                #     print(f"循环 {cycle_id} ，场景 {scene_id} 中：物体 {i} 面积比例: 0.0000 (单物体掩码为0)")
-
-            # 构建当前循环和场景的保存路径
-            save_path = os.path.join(
-                individual_object_size,
-                'cycle_{:0>4}'.format(cycle_id),
-                "{:0>3}".format(scene_id)
-            )
-            if not os.path.exists(save_path):
-                os.makedirs(save_path)
-            file_loc = save_path + '/' + '{:0>3}'.format(scene_id) + '.csv'
-            assert len(areas_id) == scene_id  # 检查每个场景的物体数量一致
-            # 将面积比例写入csv文件, 每一列为一个物体的面积比例
-            with open(file_loc, 'w', newline='') as f:
-                f_csv = csv.writer(f)
-                f_csv.writerow(areas_id)
+                    failed_tasks.append((result_cycle_id, result_scene_id, error_msg))
+                    
+            except Exception as e:
+                completed_tasks += 1
+                error_msg = f"任务执行异常: {str(e)}"
+                failed_tasks.append((cycle_id, scene_id, error_msg))
+                thread_safe_print(f"❌ 循环 {cycle_id}，场景 {scene_id} 执行异常: {e}")
+    
+    # 输出最终统计
+    thread_safe_print(f"\n📈 处理完成统计:")
+    thread_safe_print(f"   总任务数: {total_tasks}")
+    thread_safe_print(f"   成功任务: {completed_tasks - len(failed_tasks)}")
+    thread_safe_print(f"   失败任务: {len(failed_tasks)}")
+    
+    if failed_tasks:
+        thread_safe_print(f"\n❌ 失败的任务列表:")
+        for cycle_id, scene_id, error_msg in failed_tasks:
+            thread_safe_print(f"   循环{cycle_id}-场景{scene_id}: {error_msg}")
+        
+        # 将失败的任务保存到文件
+        error_log_file = os.path.join(individual_object_size, 'processing_errors.txt')
+        with open(error_log_file, 'w', encoding='utf-8') as f:
+            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"失败任务数: {len(failed_tasks)}\n\n")
+            for cycle_id, scene_id, error_msg in failed_tasks:
+                f.write(f"循环{cycle_id}-场景{scene_id}: {error_msg}\n")
+        thread_safe_print(f"📝 失败任务已记录到: {error_log_file}")
+    else:
+        thread_safe_print(f"🎉 所有任务均成功完成!")
 
 if __name__ == '__main__':
     import time
     start_time = time.time()
+    
+    print(f"🔧 配置信息:")
+    print(f"   数据目录: {FILE_DIR}")
+    print(f"   循环列表: {cycle_list}")
+    print(f"   场景列表: {scene_list}")
+    print(f"   工作线程数: {FLAGS.num_workers}")
+    print(f"   总任务数: {len(cycle_list) * len(scene_list)}")
+    print()
+    
     render_scenes()
-    print(time.time() - start_time)
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"\n⏱️ 总耗时: {elapsed_time:.2f} 秒 ({elapsed_time/60:.1f} 分钟)")
+    
+    # 计算平均每个任务的处理时间
+    total_tasks = len(cycle_list) * len(scene_list)
+    avg_time_per_task = elapsed_time / total_tasks
+    print(f"📊 平均每个循环-场景组合处理时间: {avg_time_per_task:.2f} 秒")
     
     # # 测试PNG读取函数
     # test_file = "/home/lixinlong/Data/Diffusion_Suction_DataSet/segment_images_single/cycle_0002/049/049_000/Image0001.png"

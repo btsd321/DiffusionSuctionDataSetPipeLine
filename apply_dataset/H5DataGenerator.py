@@ -499,7 +499,8 @@ class H5DataGenerator(object):
             torque = np.sqrt(torque_x**2 + torque_y**2)
             score = 1 - min(1, torque / wrench_thre)
             suction_wrench_scores.append(score)
-        suction_wrench_scores = np.array(suction_wrench_scores)
+        # 确保初始转换为float64类型，避免后续计算中的数据类型问题
+        suction_wrench_scores = np.array(suction_wrench_scores, dtype=np.float64)
         
         # 定义参考向量，指向负Z轴方向（垂直向下，符合重力方向）
         reference_vector = np.array([0, 0, -1])
@@ -530,6 +531,9 @@ class H5DataGenerator(object):
         # - 180度（完全垂直向上）→ 权重0.0
         mapped_values = 1 - (angles_degrees / 180)
 
+        # 确保数据类型兼容，避免casting错误
+        suction_wrench_scores = suction_wrench_scores.astype(np.float64)
+        mapped_values = mapped_values.astype(np.float64)
         suction_wrench_scores *= mapped_values # 乘以权重
         return suction_wrench_scores
     

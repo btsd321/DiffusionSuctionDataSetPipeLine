@@ -11,11 +11,15 @@
             "program": "${workspaceFolder}/generate_dataset/physics_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "6",
-                "--scene_list", "43",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "6",
+                "--scene_list",
+                "43",
                 // "--input_type", "continuous_scences",
-                "--input_type", "discrete_scences",
+                "--input_type",
+                "discrete_scences",
                 // "--visualize"
             ]
         },
@@ -26,13 +30,16 @@
             "program": "${workspaceFolder}/generate_dataset/render_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[17,20]",
-                "--scene_list", "[1,50]",  // 只测试一个场景
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[17,20]",
+                "--scene_list",
+                "[1,50]", // 只测试一个场景
                 "--use_gpu"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0"  // 确保CUDA设备可见
+                "CUDA_VISIBLE_DEVICES": "0" // 确保CUDA设备可见
             }
         },
         {
@@ -42,12 +49,16 @@
             "program": "${workspaceFolder}/generate_dataset/render_utils_single.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[21,30]",
+                "--scene_list",
+                "[1,50]",
                 "--use_gpu",
                 "--disable_print",
-                "--input_type", "continuous_scences",
+                "--input_type",
+                "continuous_scences",
                 // "--input_type", "discrete_scences",
                 "--ultra_fast"
             ]
@@ -59,9 +70,12 @@
             "program": "${workspaceFolder}/generate_dataset/individual_object_size.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[21,30]",
+                "--scene_list",
+                "[1,50]",
             ]
         },
         {
@@ -71,10 +85,14 @@
             "program": "${workspaceFolder}/generate_dataset/gt_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
-                "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[21,30]",
+                "--scene_list",
+                "[1,50]",
+                "--camera_info_file",
+                "${workspaceFolder}/config/camera_info.yaml",
             ]
         },
         {
@@ -84,16 +102,18 @@
             "program": "${workspaceFolder}/apply_dataset/generate_train_dataset.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
-                "--camera_info_file", "${workspaceFolder}/config/camera_info.yaml",
-                "--parameter_file", "${workspaceFolder}/config/parameter.json",
-
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[21,30]",
+                "--scene_list",
+                "[1,50]",
+                "--camera_info_file",
+                "${workspaceFolder}/config/camera_info.yaml",
+                "--parameter_file",
+                "${workspaceFolder}/config/parameter.json",
             ]
         },
-
-
         {
             "name": "tools: check_png.py",
             "type": "debugpy",
@@ -101,9 +121,12 @@
             "program": "${workspaceFolder}/tools/check_png.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[11,20]",
+                "--scene_list",
+                "[1,50]",
             ]
         },
         {
@@ -113,9 +136,12 @@
             "program": "${workspaceFolder}/tools/check_physics_utils.py",
             "console": "integratedTerminal",
             "args": [
-                "--data_dir", "~/Data/Diffusion_Suction_DataSet",
-                "--cycle_list", "[11,20]",
-                "--scene_list", "[1,50]",
+                "--data_dir",
+                "~/Data/Diffusion_Suction_DataSet",
+                "--cycle_list",
+                "[31,99]",
+                "--scene_list",
+                "[1,50]",
             ]
         }
     ]

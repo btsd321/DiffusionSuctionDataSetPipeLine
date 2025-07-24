@@ -14,6 +14,24 @@ import Imath
 import argparse
 import re
 import gc
+import multiprocessing as mp
+import subprocess
+import time
+
+def detect_gpu_count():
+    """检测系统中可用的NVIDIA GPU数量"""
+    try:
+        result = subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True, check=True)
+        gpu_lines = [line for line in result.stdout.strip().split('\n') if line.startswith('GPU')]
+        gpu_count = len(gpu_lines)
+        print(f"检测到 {gpu_count} 个NVIDIA GPU:")
+        for line in gpu_lines:
+            print(f"  {line}")
+        return gpu_count
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"无法检测GPU信息: {e}")
+        print("将使用CPU渲染")
+        return 0
 
 def parse_range_or_single(input_str):
     """
@@ -56,6 +74,10 @@ parser.add_argument('--scene_list', type=str, required=True,
 parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
 # 是否启用GPU加速渲染
 parser.add_argument('--use_gpu', action='store_true', help='设置该参数则启用GPU加速渲染')
+# GPU编号（用于多进程渲染时指定特定GPU）
+parser.add_argument('--gpu_id', type=int, default=0, help='指定使用的GPU编号（多进程渲染时使用）')
+# 是否启用多进程并行渲染
+parser.add_argument('--parallel', action='store_true', help='启用多进程并行渲染，自动检测GPU数量并分配任务')
 FLAGS = parser.parse_args()
 
 # 解析循环编号和场景编号
@@ -180,14 +202,29 @@ class BlenderRenderClass:
 
     def set_device(self):
         if FLAGS.use_gpu:
+            # 设置CUDA可见设备（用于多进程渲染）
+            if hasattr(FLAGS, 'gpu_id') and FLAGS.gpu_id is not None:
+                os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpu_id)
+                print(f'设置CUDA_VISIBLE_DEVICES为GPU {FLAGS.gpu_id}')
+            
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
             prefs.compute_device_type = 'CUDA'
             prefs.get_devices()
-            for device in prefs.devices:
+            
+            gpu_found = False
+            for i, device in enumerate(prefs.devices):
                 if device.type == 'CUDA' or device.type == 'OPTIX':
-                    device.use = True
-            print('已启用NVIDIA GPU加速渲染')
+                    if i == 0:  # 由于设置了CUDA_VISIBLE_DEVICES，第一个设备就是我们要用的
+                        device.use = True
+                        gpu_found = True
+                        print(f'已启用GPU进行渲染 (设备索引: {i})')
+                    else:
+                        device.use = False
+            
+            if not gpu_found:
+                print('警告: 未找到可用的GPU，切换到CPU渲染')
+                bpy.context.scene.cycles.device = 'CPU'
         else:
             bpy.context.scene.cycles.device = 'CPU'
             print('已设置为CPU渲染')
@@ -614,11 +651,126 @@ class BlenderRenderClass:
         np.save('times.npy', times)
         print(f"总计渲染 {len(times)} 个场景，平均耗时: {np.mean(times):.2f}秒")
         print(times)
+
+def render_worker(gpu_id, cycle_scene_pairs, data_dir, camera_info_file):
+    """工作进程函数，每个进程使用指定的GPU"""
+    print(f"GPU {gpu_id} 工作进程启动，处理 {len(cycle_scene_pairs)} 个任务")
+    
+    # 设置CUDA可见设备
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+    
+    # 构造命令行参数，为每个cycle-scene对分别执行
+    for cycle_id, scene_id in cycle_scene_pairs:
+        cmd = [
+            'blender', '--background', '--python', __file__,
+            '--', 
+            '--data_dir', data_dir,
+            '--cycle_list', str(cycle_id),
+            '--scene_list', str(scene_id),
+            '--camera_info_file', camera_info_file,
+            '--gpu_id', str(gpu_id),
+            '--use_gpu'
+        ]
+        
+        print(f"GPU {gpu_id} 开始渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print(f"GPU {gpu_id} 完成渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+        except subprocess.CalledProcessError as e:
+            print(f"GPU {gpu_id} 渲染失败: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+            print(f"错误信息: {e.stderr}")
+    
+    print(f"GPU {gpu_id} 工作进程完成")
+
+def main_parallel():
+    """主函数：自动检测GPU并分配任务到多个GPU进行并行渲染"""
+    print("=" * 50)
+    print("启动多进程并行渲染模式")
+    print("=" * 50)
+    
+    # 检测可用GPU数量
+    gpu_count = detect_gpu_count()
+    
+    if gpu_count == 0:
+        print("未检测到GPU，退出并行模式")
+        return
+    
+    # 解析循环编号和场景编号
+    try:
+        cycle_list = parse_range_or_single(FLAGS.cycle_list)
+        scene_list = parse_range_or_single(FLAGS.scene_list)
+    except ValueError as e:
+        print(f"参数解析错误: {e}")
+        return
+    
+    # 生成所有cycle和scene的组合
+    all_pairs = []
+    for cycle_id in cycle_list:
+        for scene_id in scene_list:
+            all_pairs.append((cycle_id, scene_id))
+    
+    total_tasks = len(all_pairs)
+    print(f"总任务数: {total_tasks}")
+    print(f"可用GPU数: {gpu_count}")
+    
+    # 将任务分配到各个GPU
+    chunk_size = total_tasks // gpu_count
+    remainder = total_tasks % gpu_count
+    
+    chunks = []
+    start_idx = 0
+    
+    for i in range(gpu_count):
+        # 为前remainder个GPU分配额外的一个任务
+        current_chunk_size = chunk_size + (1 if i < remainder else 0)
+        end_idx = start_idx + current_chunk_size
+        
+        if start_idx < total_tasks:
+            chunk = all_pairs[start_idx:end_idx]
+            chunks.append(chunk)
+            print(f"GPU {i}: 分配 {len(chunk)} 个任务 (任务索引: {start_idx}-{end_idx-1})")
+        else:
+            chunks.append([])
+            print(f"GPU {i}: 无任务分配")
+        
+        start_idx = end_idx
+    
+    # 启动多个进程
+    start_time = time.time()
+    processes = []
+    
+    for gpu_id, chunk in enumerate(chunks):
+        if chunk:  # 确保有任务要处理
+            p = mp.Process(target=render_worker, 
+                          args=(gpu_id, chunk, FLAGS.data_dir, FLAGS.camera_info_file))
+            p.start()
+            processes.append(p)
+    
+    print(f"\n已启动 {len(processes)} 个渲染进程")
+    print("等待所有进程完成...")
+    
+    # 等待所有进程完成
+    for i, p in enumerate(processes):
+        p.join()
+        print(f"进程 {i} 已完成")
+    
+    total_time = time.time() - start_time
+    print("=" * 50)
+    print("所有GPU渲染完成!")
+    print(f"总耗时: {total_time:.2f}秒")
+    print(f"平均每个任务: {total_time/total_tasks:.2f}秒")
+    print("=" * 50)
+
 if __name__ == '__main__':
     import time
     
-    blender_generator = BlenderRenderClass()
-    blender_generator.render_scenes()
+    # 检查是否启用并行模式
+    if FLAGS.parallel:
+        main_parallel()
+    else:
+        # 单进程模式（原有逻辑）
+        blender_generator = BlenderRenderClass()
+        blender_generator.render_scenes()
 
     
 

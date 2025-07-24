@@ -17,6 +17,55 @@ import gc
 import multiprocessing as mp
 import subprocess
 import time
+import threading
+
+def monitor_gpu_usage(gpu_id, duration=30, interval=2):
+    """监控指定GPU的使用情况"""
+    print(f"开始监控GPU {gpu_id}...")
+    
+    start_time = time.time()
+    max_util = 0
+    max_mem = 0
+    
+    while time.time() - start_time < duration:
+        try:
+            # 获取详细的GPU信息
+            result = subprocess.run([
+                'nvidia-smi', '-i', str(gpu_id), 
+                '--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw',
+                '--format=csv,noheader,nounits'
+            ], capture_output=True, text=True, check=True)
+            
+            gpu_util, mem_util, mem_used, mem_total, temp, power = result.stdout.strip().split(', ')
+            
+            # 转换数值
+            gpu_util = float(gpu_util) if gpu_util != 'N/A' else 0
+            mem_util = float(mem_util) if mem_util != 'N/A' else 0
+            mem_used = int(mem_used) if mem_used != 'N/A' else 0
+            temp = float(temp) if temp != 'N/A' else 0
+            power = float(power) if power != 'N/A' else 0
+            
+            max_util = max(max_util, gpu_util)
+            max_mem = max(max_mem, mem_used)
+            
+            print(f"[GPU {gpu_id}] 利用率: {gpu_util:5.1f}% | 显存利用率: {mem_util:5.1f}% | "
+                  f"显存使用: {mem_used}MB | 温度: {temp}°C | 功耗: {power}W")
+            
+            # 检查计算进程
+            proc_result = subprocess.run([
+                'nvidia-smi', '-i', str(gpu_id), '--query-compute-apps=pid,process_name,used_memory',
+                '--format=csv,noheader'
+            ], capture_output=True, text=True)
+            
+            if proc_result.stdout.strip():
+                print(f"[GPU {gpu_id}] 计算进程: {proc_result.stdout.strip()}")
+            
+        except Exception as e:
+            print(f"GPU {gpu_id} 监控错误: {e}")
+        
+        time.sleep(interval)
+    
+    print(f"GPU {gpu_id} 监控完成: 最大利用率 {max_util:.1f}%, 最大显存使用 {max_mem}MB")
 
 def detect_gpu_count():
     """检测系统中可用的NVIDIA GPU数量"""
@@ -274,6 +323,13 @@ class BlenderRenderClass:
             print(f'OPTIX设备索引: {optix_devices}')
             print(f'CPU设备索引: {cpu_devices}')
             print(f'已启用的GPU设备: {enabled_devices}')
+            
+            # 验证GPU是否真的被启用
+            if enabled_devices:
+                print("验证GPU启用状态:")
+                for i, device in enumerate(prefs.devices):
+                    if device.use:
+                        print(f"  设备 {i} ({device.type}): {device.name} - 已启用")
             
             if not gpu_found:
                 print('警告: 未找到可用的GPU，切换到CPU渲染')
@@ -713,6 +769,11 @@ def render_worker(gpu_id, cycle_scene_pairs, data_dir, camera_info_file):
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
     print(f"进程GPU {gpu_id}: 设置CUDA_VISIBLE_DEVICES={gpu_id}")
     
+    # 启动GPU监控线程
+    monitor_thread = threading.Thread(target=monitor_gpu_usage, args=(gpu_id, 300, 2))
+    monitor_thread.daemon = True
+    monitor_thread.start()
+    
     # 构造命令行参数，为每个cycle-scene对分别执行
     for cycle_id, scene_id in cycle_scene_pairs:
         cmd = [
@@ -727,6 +788,16 @@ def render_worker(gpu_id, cycle_scene_pairs, data_dir, camera_info_file):
         ]
         
         print(f"GPU {gpu_id} 开始渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+        
+        # 在渲染前检查GPU状态
+        try:
+            gpu_status_cmd = ['nvidia-smi', '--query-gpu=name,memory.used,memory.total', 
+                             '--format=csv,noheader', '-i', str(gpu_id)]
+            gpu_status = subprocess.run(gpu_status_cmd, capture_output=True, text=True, check=True)
+            print(f"GPU {gpu_id} 渲染前状态: {gpu_status.stdout.strip()}")
+        except:
+            pass
+        
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             print(f"GPU {gpu_id} 完成渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")

@@ -749,6 +749,25 @@ def main_parallel():
         print("未检测到GPU，退出并行模式")
         return
     
+    # 获取实际的GPU编号列表
+    cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', None)
+    if cuda_visible_devices:
+        # 如果设置了CUDA_VISIBLE_DEVICES，使用其中指定的GPU编号
+        available_gpus = [int(x.strip()) for x in cuda_visible_devices.split(',')]
+        print(f"从CUDA_VISIBLE_DEVICES获取GPU编号: {available_gpus}")
+    else:
+        # 如果没有设置，使用0到gpu_count-1
+        available_gpus = list(range(gpu_count))
+        print(f"使用默认GPU编号: {available_gpus}")
+    
+    # 确保GPU数量一致
+    if len(available_gpus) != gpu_count:
+        print(f"警告: CUDA_VISIBLE_DEVICES中的GPU数量({len(available_gpus)})与nvidia-smi检测到的GPU数量({gpu_count})不一致")
+        # 使用较小的数量
+        gpu_count = min(len(available_gpus), gpu_count)
+        available_gpus = available_gpus[:gpu_count]
+        print(f"使用GPU编号: {available_gpus}")
+    
     # 解析循环编号和场景编号
     try:
         cycle_list = parse_range_or_single(FLAGS.cycle_list)
@@ -766,6 +785,7 @@ def main_parallel():
     total_tasks = len(all_pairs)
     print(f"总任务数: {total_tasks}")
     print(f"可用GPU数: {gpu_count}")
+    print(f"GPU编号列表: {available_gpus}")
     
     # 将任务分配到各个GPU
     chunk_size = total_tasks // gpu_count
@@ -782,11 +802,11 @@ def main_parallel():
         
         if start_idx < total_tasks:
             chunk = all_pairs[start_idx:end_idx]
-            chunks.append(chunk)
-            print(f"GPU {i}: 分配 {len(chunk)} 个任务 (任务索引: {start_idx}-{end_idx-1})")
+            chunks.append((available_gpus[i], chunk))  # 使用实际的GPU编号
+            print(f"GPU {available_gpus[i]}: 分配 {len(chunk)} 个任务 (任务索引: {start_idx}-{end_idx-1})")
         else:
-            chunks.append([])
-            print(f"GPU {i}: 无任务分配")
+            chunks.append((available_gpus[i], []))
+            print(f"GPU {available_gpus[i]}: 无任务分配")
         
         start_idx = end_idx
     
@@ -794,7 +814,7 @@ def main_parallel():
     start_time = time.time()
     processes = []
     
-    for gpu_id, chunk in enumerate(chunks):
+    for gpu_id, chunk in chunks:
         if chunk:  # 确保有任务要处理
             p = mp.Process(target=render_worker, 
                           args=(gpu_id, chunk, FLAGS.data_dir, FLAGS.camera_info_file))

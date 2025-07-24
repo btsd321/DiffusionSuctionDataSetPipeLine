@@ -202,10 +202,10 @@ class BlenderRenderClass:
 
     def set_device(self):
         if FLAGS.use_gpu:
-            # 设置CUDA可见设备（用于多进程渲染）
-            if hasattr(FLAGS, 'gpu_id') and FLAGS.gpu_id is not None:
-                os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpu_id)
-                print(f'设置CUDA_VISIBLE_DEVICES为GPU {FLAGS.gpu_id}')
+            # # 设置CUDA可见设备（用于多进程渲染）
+            # if hasattr(FLAGS, 'gpu_id') and FLAGS.gpu_id is not None:
+            #     os.environ['CUDA_VISIBLE_DEVICES'] = str(FLAGS.gpu_id)
+            #     print(f'设置CUDA_VISIBLE_DEVICES为GPU {FLAGS.gpu_id}')
             
             bpy.context.scene.cycles.device = 'GPU'
             prefs = bpy.context.preferences.addons['cycles'].preferences
@@ -213,14 +213,67 @@ class BlenderRenderClass:
             prefs.get_devices()
             
             gpu_found = False
+            print(f'检测到 {len(prefs.devices)} 个计算设备')
+            print(f'当前CUDA_VISIBLE_DEVICES: {os.environ.get("CUDA_VISIBLE_DEVICES", "未设置")}')
+            
+            # 统计各类型设备数量
+            device_types = {}
+            cuda_devices = []
+            optix_devices = []
+            cpu_devices = []
+            
+            # 第一步：收集所有设备信息
             for i, device in enumerate(prefs.devices):
-                if device.type == 'CUDA' or device.type == 'OPTIX':
-                    if i == 0:  # 由于设置了CUDA_VISIBLE_DEVICES，第一个设备就是我们要用的
-                        device.use = True
-                        gpu_found = True
-                        print(f'已启用GPU进行渲染 (设备索引: {i})')
-                    else:
-                        device.use = False
+                device_type = device.type
+                if device_type not in device_types:
+                    device_types[device_type] = 0
+                device_types[device_type] += 1
+                
+                print(f'设备 {i}: 类型={device.type}, 名称={device.name}')
+                
+                if device.type == 'CUDA':
+                    cuda_devices.append(i)
+                elif device.type == 'OPTIX':
+                    optix_devices.append(i)
+                elif device.type == 'CPU':
+                    cpu_devices.append(i)
+            
+            # 第二步：设备启用策略
+            # 优先启用OPTIX设备，如果没有则启用CUDA设备
+            enabled_devices = []
+            
+            if optix_devices:
+                # 如果有OPTIX设备，启用所有OPTIX设备
+                for i in optix_devices:
+                    prefs.devices[i].use = True
+                    enabled_devices.append(i)
+                    gpu_found = True
+                    print(f'已启用OPTIX GPU (设备索引: {i})')
+                
+                # 禁用对应的CUDA设备（避免重复）
+                for i in cuda_devices:
+                    prefs.devices[i].use = False
+                    print(f'禁用对应的CUDA设备 (设备索引: {i})')
+                    
+            elif cuda_devices:
+                # 如果没有OPTIX但有CUDA设备，启用所有CUDA设备
+                for i in cuda_devices:
+                    prefs.devices[i].use = True
+                    enabled_devices.append(i)
+                    gpu_found = True
+                    print(f'已启用CUDA GPU (设备索引: {i})')
+            
+            # 禁用CPU设备（通常不需要CPU和GPU同时渲染）
+            for i in cpu_devices:
+                prefs.devices[i].use = False
+                print(f'禁用CPU设备 (设备索引: {i})')
+            
+            # 打印设备统计信息
+            print(f'设备类型统计: {device_types}')
+            print(f'CUDA设备索引: {cuda_devices}')
+            print(f'OPTIX设备索引: {optix_devices}')
+            print(f'CPU设备索引: {cpu_devices}')
+            print(f'已启用的GPU设备: {enabled_devices}')
             
             if not gpu_found:
                 print('警告: 未找到可用的GPU，切换到CPU渲染')
@@ -656,8 +709,9 @@ def render_worker(gpu_id, cycle_scene_pairs, data_dir, camera_info_file):
     """工作进程函数，每个进程使用指定的GPU"""
     print(f"GPU {gpu_id} 工作进程启动，处理 {len(cycle_scene_pairs)} 个任务")
     
-    # 设置CUDA可见设备
+    # 设置CUDA可见设备为单个GPU（用于多进程时的GPU隔离）
     os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+    print(f"进程GPU {gpu_id}: 设置CUDA_VISIBLE_DEVICES={gpu_id}")
     
     # 构造命令行参数，为每个cycle-scene对分别执行
     for cycle_id, scene_id in cycle_scene_pairs:
@@ -717,6 +771,7 @@ def main_parallel():
     chunk_size = total_tasks // gpu_count
     remainder = total_tasks % gpu_count
     
+
     chunks = []
     start_idx = 0
     

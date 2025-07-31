@@ -405,12 +405,19 @@ class H5DataGenerator(object):
             if suction_points_normalization_id.shape[0] == 0:
                 continue
             suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float()
-            suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
             anno_points_knn = torch.from_numpy(anno_points).float()
-            anno_points_knn = anno_points_knn.cuda()
-            # knn最近邻查找, 获取吸取点的密封分数
-            indices, dist=knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
-            dist=dist.cpu().numpy().reshape(dist.shape[-1])
+            # 优先用GPU，失败则自动切换CPU
+            try:
+                suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
+                anno_points_knn = anno_points_knn.cuda()
+                indices, dist = knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
+                dist = dist.cpu().numpy().reshape(dist.shape[-1])
+            except RuntimeError as e:
+                print(f"KNN CUDA失败，切换到CPU: {e}")
+                suction_points_normalization_id_knn = suction_points_normalization_id_knn.cpu()
+                anno_points_knn = anno_points_knn.cpu()
+                indices, dist = knn(anno_points_knn, suction_points_normalization_id_knn, k=1)
+                dist = dist.numpy().reshape(dist.shape[-1])
             suction_seal_scores[obj_ids == index] = anno_scores[dist]
         return suction_seal_scores
     

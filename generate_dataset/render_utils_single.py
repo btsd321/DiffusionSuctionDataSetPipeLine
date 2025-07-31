@@ -37,6 +37,11 @@ def parse_range_or_single(input_str):
     raise ValueError(f"无法解析输入格式: {input_str}. 支持的格式: '5'(单个), '[1,10]'(区间), '{{1,3,5}}'(列表)")
 
 # 命令行参数解析
+
+import multiprocessing as mp
+import subprocess
+import threading
+
 parser = argparse.ArgumentParser()
 # 数据集根目录
 parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet', help='数据集根目录')
@@ -57,7 +62,110 @@ parser.add_argument('--ultra_fast', action='store_true',
                     help='极速模式：最大化性能优化，适用于batch mask生成')
 parser.add_argument('--input_type', type=str, default='continuous_scences', choices=['discrete_scences', 'continuous_scences'],
                     help='输入类型，discrete_scences表示输入为离散场景此时忽略cycle_list参数和scene_list参数，continuous_scences表示连续场景此时cycle_list参数和scene_list参数为循环次数和场景数量')
+# 新增多进程并行参数
+parser.add_argument('--parallel', action='store_true', help='启用多进程并行渲染')
+parser.add_argument('--gpu_id', type=int, default=0, help='指定使用的GPU编号（多进程渲染时使用）')
 FLAGS = parser.parse_args()
+def detect_gpu_count():
+    """检测系统中可用的NVIDIA GPU数量"""
+    try:
+        result = subprocess.run(['nvidia-smi', '-L'], capture_output=True, text=True, check=True)
+        gpu_lines = [line for line in result.stdout.strip().split('\n') if line.startswith('GPU')]
+        gpu_count = len(gpu_lines)
+        print(f"检测到 {gpu_count} 个NVIDIA GPU:")
+        for line in gpu_lines:
+            print(f"  {line}")
+        return gpu_count
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"无法检测GPU信息: {e}")
+        print("将使用CPU渲染")
+        return 0
+
+def render_worker(gpu_id, cycle_scene_pairs, data_dir, camera_info_file, extra_args=None):
+    """工作进程函数，每个进程使用指定的GPU"""
+    print(f"GPU {gpu_id} 工作进程启动，处理 {len(cycle_scene_pairs)} 个任务")
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id)
+    for cycle_id, scene_id in cycle_scene_pairs:
+        cmd = [
+            'blender', '--background', '--python', os.path.abspath(__file__),
+            '--',
+            '--data_dir', data_dir,
+            '--cycle_list', str(cycle_id),
+            '--scene_list', str(scene_id),
+            '--camera_info_file', camera_info_file,
+            '--gpu_id', str(gpu_id),
+            '--use_gpu'
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        print(f"GPU {gpu_id} 开始渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            print(f"GPU {gpu_id} 完成渲染: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+        except subprocess.CalledProcessError as e:
+            print(f"GPU {gpu_id} 渲染失败: Cycle {cycle_id:04d}, Scene {scene_id:03d}")
+            print(f"错误信息: {e.stderr}")
+    print(f"GPU {gpu_id} 工作进程完成")
+
+def main_parallel():
+    print("=" * 50)
+    print("启动多进程并行渲染模式")
+    print("=" * 50)
+    gpu_count = detect_gpu_count()
+    if gpu_count == 0:
+        print("未检测到GPU，退出并行模式")
+        return
+    cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', None)
+    if cuda_visible_devices:
+        available_gpus = [int(x.strip()) for x in cuda_visible_devices.split(',')]
+        print(f"从CUDA_VISIBLE_DEVICES获取GPU编号: {available_gpus}")
+    else:
+        available_gpus = list(range(gpu_count))
+        print(f"使用默认GPU编号: {available_gpus}")
+    if FLAGS.input_type == 'continuous_scences':
+        cycle_list = parse_range_or_single(FLAGS.cycle_list)
+        scene_list = parse_range_or_single(FLAGS.scene_list)
+        all_pairs = [(cycle_id, scene_id) for cycle_id in cycle_list for scene_id in scene_list]
+    else:
+        # 离散模式
+        all_pairs = list(zip(CYCLE_idx_list, SCENE_idx_list))
+    total_tasks = len(all_pairs)
+    print(f"总任务数: {total_tasks}")
+    print(f"可用GPU数: {gpu_count}")
+    print(f"GPU编号列表: {available_gpus}")
+    chunk_size = total_tasks // gpu_count
+    remainder = total_tasks % gpu_count
+    chunks = []
+    start_idx = 0
+    for i in range(gpu_count):
+        current_chunk_size = chunk_size + (1 if i < remainder else 0)
+        end_idx = start_idx + current_chunk_size
+        if start_idx < total_tasks:
+            chunk = all_pairs[start_idx:end_idx]
+            chunks.append((available_gpus[i], chunk))
+            print(f"GPU {available_gpus[i]}: 分配 {len(chunk)} 个任务 (任务索引: {start_idx}-{end_idx-1})")
+        else:
+            chunks.append((available_gpus[i], []))
+            print(f"GPU {available_gpus[i]}: 无任务分配")
+        start_idx = end_idx
+    start_time = time.time()
+    processes = []
+    for gpu_id, chunk in chunks:
+        if chunk:
+            p = mp.Process(target=render_worker, args=(gpu_id, chunk, FLAGS.data_dir, FLAGS.camera_info_file))
+            p.start()
+            processes.append(p)
+    print(f"\n已启动 {len(processes)} 个渲染进程")
+    print("等待所有进程完成...")
+    for i, p in enumerate(processes):
+        p.join()
+        print(f"进程 {i} 已完成")
+    total_time = time.time() - start_time
+    print("=" * 50)
+    print("所有GPU渲染完成!")
+    print(f"总耗时: {total_time:.2f}秒")
+    print(f"平均每个任务: {total_time/total_tasks:.2f}秒")
+    print("=" * 50)
 
 # 失败的循环-场景列表（用于离散模式）
 failed_cycles_scenes = [
@@ -528,9 +636,11 @@ class BlenderRenderClass:
 
 if __name__ == '__main__':
     import time
-    start_time = time.time()
-
-    blender_generator = BlenderRenderClass()
-    blender_generator.render_scenes()
-    end_time = time.time()
-    print(end_time-start_time )
+    if FLAGS.parallel:
+        main_parallel()
+    else:
+        start_time = time.time()
+        blender_generator = BlenderRenderClass()
+        blender_generator.render_scenes()
+        end_time = time.time()
+        print(end_time-start_time )

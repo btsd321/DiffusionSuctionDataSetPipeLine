@@ -12,15 +12,13 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "6",
                 "--scene_list",
                 "43",
-                // "--input_type", "continuous_scences",
                 "--input_type",
-                "discrete_scences",
-                // "--visualize"
+                "discrete_scences"
             ]
         },
         {
@@ -31,15 +29,15 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[17,20]",
                 "--scene_list",
-                "[1,50]", // 只测试一个场景
+                "[1,50]",
                 "--use_gpu"
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "0" // 确保CUDA设备可见
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
@@ -50,7 +48,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[21,30]",
                 "--scene_list",
@@ -59,7 +57,6 @@
                 "--disable_print",
                 "--input_type",
                 "continuous_scences",
-                // "--input_type", "discrete_scences",
                 "--ultra_fast"
             ]
         },
@@ -71,11 +68,11 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[21,30]",
                 "--scene_list",
-                "[1,50]",
+                "[1,50]"
             ]
         },
         {
@@ -86,13 +83,13 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[21,30]",
                 "--scene_list",
                 "[1,50]",
                 "--camera_info_file",
-                "${workspaceFolder}/config/camera_info.yaml",
+                "${workspaceFolder}/config/camera_info.yaml"
             ]
         },
         {
@@ -103,15 +100,15 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
-                "[21,30]",
+                "30",
                 "--scene_list",
-                "[1,50]",
+                "[1,12]",
                 "--camera_info_file",
                 "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file",
-                "${workspaceFolder}/config/parameter.json",
+                "${workspaceFolder}/config/parameter.json"
             ]
         },
         {
@@ -122,11 +119,11 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[11,20]",
                 "--scene_list",
-                "[1,50]",
+                "[1,50]"
             ]
         },
         {
@@ -137,12 +134,20 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "~/Data/Diffusion_Suction_DataSet",
+                "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "[31,99]",
                 "--scene_list",
-                "[1,50]",
+                "[1,50]"
             ]
+        },
+        {
+            "type": "cmake",
+            "request": "launch",
+            "name": "Debug portfile(s)",
+            "cmakeDebugType": "external",
+            "pipeName": "/tmp/vcpkg_ext_portfile_dbg",
+            "preLaunchTask": "Debug vcpkg commands"
         }
     ]
 }

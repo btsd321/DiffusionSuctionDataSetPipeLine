@@ -190,7 +190,7 @@ class H5DataGenerator(object):
         """
         # 加载深度范围等关键参数
         self.params = self._load_parameters(params_file_name)
-        # 加载相机内参
+        # 加载相机参数
         self.cam_info = CameraInfo(camera_info_file_name)
         # 设置点云采样目标数量，确保数据一致性
         self.target_num_point = target_num_point
@@ -462,7 +462,7 @@ class H5DataGenerator(object):
         plt.show()
         return
     
-    def _cal_score_wrench(self, suction_points, suction_or, label_trans):
+    def _cal_score_wrench(self, suction_points, suction_or, label_trans, camera_info):
         '''
         计算抗扭矩评分，抗扭矩评分用于判断吸盘在特定姿势下是否无法抵抗重力
         '''
@@ -510,7 +510,11 @@ class H5DataGenerator(object):
         suction_wrench_scores = np.array(suction_wrench_scores, dtype=np.float64)
         
         # 定义参考向量，指向负Z轴方向（垂直向下，符合重力方向）
-        reference_vector = np.array([0, 0, -1])
+        reference_vector_world = np.array([0, 0, -1])
+        # 将参考向量转换为相机坐标系下的向量
+        reference_vector = np.matmul(reference_vector_world, camera_info.extrinsic_matrix[:3, :3].T)
+        # 确保参考向量是单位向量
+        reference_vector = reference_vector / np.linalg.norm(reference_vector)
 
         # 计算法向量与参考向量的点积（向量内积）
         dot_products = np.sum(suction_or * reference_vector, axis=1)
@@ -767,7 +771,7 @@ class H5DataGenerator(object):
         # self._score_seel_visiualization(score_seal, suction_points, suction_or)
 
         # 抗扭矩评分
-        score_wrench = self._cal_score_wrench(suction_points, suction_or,  points_label_trans)
+        score_wrench = self._cal_score_wrench(suction_points, suction_or,  points_label_trans, camera_info=self.cam_info)
 
         # 碰撞评分
         score_collision = self._cal_score_collision(suction_points, suction_or)

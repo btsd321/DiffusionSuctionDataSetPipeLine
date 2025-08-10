@@ -41,6 +41,6 @@ export CUDA_VISIBLE_DEVICES=0
 # --use_gpu: 启用GPU渲染加速
 python "$WORK_SPACE_DIR/generate_dataset/render_utils.py" \
     --data_dir "/home/lixinlong/Data/Diffusion_Suction_DataSet" \
-    --cycle_list "[31,49]" \
+    --cycle_list "[75,99]" \
     --scene_list "[1,50]" \
     --use_gpu

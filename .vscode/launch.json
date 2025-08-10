@@ -31,7 +31,7 @@
                 "--data_dir",
                 "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
-                "[17,20]",
+                "[50,74]",
                 "--scene_list",
                 "[1,50]",
                 "--use_gpu"

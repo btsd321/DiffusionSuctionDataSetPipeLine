@@ -39,7 +39,7 @@ fi
 # --parameter_file: 参数配置文件路径
 python "$WORK_SPACE_DIR/apply_dataset/generate_train_dataset.py" \
     --data_dir "/home/lixinlong/Data/Diffusion_Suction_DataSet" \
-    --cycle_list "30" \
-    --scene_list "[1,12]" \
+    --cycle_list "[31,49]" \
+    --scene_list "[1,50]" \
     --camera_info_file "$WORK_SPACE_DIR/config/camera_info.yaml" \
     --parameter_file "$WORK_SPACE_DIR/config/parameter.json"

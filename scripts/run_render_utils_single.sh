@@ -41,7 +41,7 @@ fi
 # --ultra_fast: 启用超快速模式
 python "$WORK_SPACE_DIR/generate_dataset/render_utils_single.py" \
     --data_dir "/home/lixinlong/Data/Diffusion_Suction_DataSet" \
-    --cycle_list "[31,49]" \
+    --cycle_list "[60,69]" \
     --scene_list "[1,50]" \
     --use_gpu \
     --disable_print \

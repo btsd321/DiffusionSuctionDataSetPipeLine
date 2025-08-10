@@ -90,14 +90,43 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
         coordinate_frame = create_coordinate_frame()
         geometries.append(coordinate_frame)
     
-    # 可视化 - 使用更安全的方式
+    # 可视化 - WSL环境优化的可视化方式
     try:
-        # 尝试使用标准的draw_geometries
-        o3d.visualization.draw_geometries(geometries)
+        # 检测是否在WSL环境中
+        import os
+        is_wsl = "microsoft" in os.uname().release.lower() or "WSL" in os.environ.get("WSL_DISTRO_NAME", "")
+        
+        if is_wsl:
+            print("检测到WSL环境，使用离屏渲染...")
+            # 在WSL环境中使用离屏渲染
+            vis = o3d.visualization.Visualizer()
+            vis.create_window(visible=False)  # 创建不可见窗口
+            for geom in geometries:
+                vis.add_geometry(geom)
+            
+            # 设置视角和渲染选项
+            ctr = vis.get_view_control()
+            ctr.set_zoom(0.8)
+            
+            # 离屏渲染并保存图像
+            vis.poll_events()
+            vis.update_renderer()
+            image = vis.capture_screen_float_buffer(False)
+            plt.figure(figsize=(12, 9))
+            plt.imshow(np.asarray(image))
+            plt.title("Point Cloud Visualization (Rendered)")
+            plt.axis('off')
+            plt.show()
+            vis.destroy_window()
+        else:
+            # 非WSL环境，尝试标准可视化
+            o3d.visualization.draw_geometries(geometries, 
+                                            window_name="Point Cloud Visualization",
+                                            width=800, height=600)
     except Exception as e:
-        print(f"Open3D标准可视化失败: {e}")
+        print(f"Open3D可视化失败: {e}")
         try:
-            # 尝试使用可视化器
+            # 备用方案：使用可视化器
             vis = o3d.visualization.Visualizer()
             vis.create_window(window_name="Point Cloud Visualization", width=800, height=600)
             for geom in geometries:
@@ -106,7 +135,13 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
             vis.destroy_window()
         except Exception as e2:
             print(f"Open3D可视化器也失败: {e2}")
-            print("建议使用matplotlib方法进行可视化")
+            print("自动切换到matplotlib可视化...")
+            # 提取点云数据用于matplotlib可视化
+            if len(geometries) > 0 and hasattr(geometries[0], 'points'):
+                points_for_mpl = np.asarray(geometries[0].points)
+                visualize_point_cloud_with_matplotlib(points_for_mpl, normals, normal_num)
+            else:
+                print("无法提取点云数据进行matplotlib可视化")
 
 def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100):
     """
@@ -158,11 +193,11 @@ def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet/train', help='数据集目录')
+    parser.add_argument('--data_dir', type=str, default='/home/lixinlong/Data/Diffusion_Suction_DataSet/train', help='数据集目录')
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
     parser.add_argument('--vision_normal_num', type=int, default=10, help='可视化向量个数')
-    parser.add_argument('--method', type=str, default='o3d', choices=['o3d', 'matplotlib'], help='可视化方法')
+    parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
     parser.add_argument('--vision_score_type', type=str, default='suction_score', choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')

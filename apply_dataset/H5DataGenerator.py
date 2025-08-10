@@ -510,11 +510,7 @@ class H5DataGenerator(object):
         suction_wrench_scores = np.array(suction_wrench_scores, dtype=np.float64)
         
         # 定义参考向量，指向负Z轴方向（垂直向下，符合重力方向）
-        reference_vector_world = np.array([0, 0, -1])
-        # 将参考向量转换为相机坐标系下的向量
-        reference_vector = np.matmul(reference_vector_world, camera_info.extrinsic_matrix[:3, :3].T)
-        # 确保参考向量是单位向量
-        reference_vector = reference_vector / np.linalg.norm(reference_vector)
+        reference_vector = np.array([0, 0, -1])
 
         # 计算法向量与参考向量的点积（向量内积）
         dot_products = np.sum(suction_or * reference_vector, axis=1)
@@ -588,6 +584,144 @@ class H5DataGenerator(object):
         score_visibility = self._cal_score_visibility()
         score = score_seal * score_wrench * score_collision * score_visibility
         return score
+    
+    def _filter_points(self, points):
+        """
+        使用统计滤波去除点云中的离群点
+        
+        统计滤波的原理：
+        1. 对每个点，计算它到最近k个邻居点的平均距离
+        2. 计算所有点的平均距离的均值和标准差
+        3. 移除距离超过 (均值 + std_ratio * 标准差) 的点
+        
+        参数:
+            points (numpy.ndarray): 输入点云，形状为(N, 3)
+            
+        返回:
+            tuple: (过滤后的点云, 有效点的索引掩码)
+        """
+        if points.shape[0] < 10:  # 点数太少时跳过滤波
+            return points, np.ones(points.shape[0], dtype=bool)
+        
+        try:
+            # 创建Open3D点云对象
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points)
+            
+            # 应用统计滤波
+            # nb_neighbors: 用于计算每个点平均距离的邻居点数量
+            # std_ratio: 标准差倍数，用于确定离群点阈值
+            pcd_filtered, inlier_indices = pcd.remove_statistical_outlier(
+                nb_neighbors=20,    # 考虑20个最近邻
+                std_ratio=2.0       # 超过2倍标准差的点被认为是离群点
+            )
+            
+            # 转换回numpy数组
+            filtered_points = np.asarray(pcd_filtered.points)
+            
+            # 创建索引掩码
+            inlier_mask = np.zeros(points.shape[0], dtype=bool)
+            inlier_mask[inlier_indices] = True
+            
+            # print(f"统计滤波: 原始点数 {points.shape[0]}, 过滤后点数 {filtered_points.shape[0]}, "
+            #       f"移除离群点 {points.shape[0] - filtered_points.shape[0]} 个")
+            
+            # 计算法向量
+            # 构建Open3D点云对象用于法向量计算
+            pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(filtered_points))
+            
+            # 使用半径搜索估计每个点的表面法向量
+            # 半径0.015米是经验值，平衡计算精度和效率
+            pc_o3d.estimate_normals(
+                o3d.geometry.KDTreeSearchParamRadius(0.015), 
+                fast_normal_computation=False  # 使用精确计算保证质量
+            )
+            
+            # 统一法向量方向：都指向负Z轴方向（向下）
+            # 这对吸取任务很重要，因为吸盘通常从上往下接近物体
+            pc_o3d.orient_normals_to_align_with_direction(np.array([0., 0., -1.]))
+            pc_o3d.normalize_normals()  # 标准化为单位向量
+            
+            # 提取处理后的数据
+            suction_or = np.array(pc_o3d.normals).astype(np.float32)  # 对应的法向量
+
+            
+            return filtered_points, suction_or, inlier_mask
+            
+        except Exception as e:
+            print(f"统计滤波失败，使用原始点云: {e}")
+            return points, np.ones(points.shape[0], dtype=bool)
+    
+    def _transform_points(self, points):
+        """
+        将点云从相机坐标系转换到世界坐标系
+        
+        使用4x4齐次变换矩阵进行完整的刚体变换（旋转+平移）
+        
+        参数:
+            points (numpy.ndarray): 相机坐标系下的点云，形状为(N, 3)
+            
+        返回:
+            numpy.ndarray: 世界坐标系下的点云，形状为(N, 3)
+        """
+        # 将3D点扩展为齐次坐标（添加第4维度为1）
+        ones = np.ones((points.shape[0], 1))
+        points_homo = np.hstack([points, ones])  # 形状: (N, 4)
+        
+        # 使用4x4外参矩阵进行变换
+        # 外参矩阵将相机坐标系转换为世界坐标系
+        points_world_homo = np.dot(points_homo, self.cam_info.extrinsic_matrix.T)
+        
+        # 提取前3个维度，去除齐次坐标
+        points_world = points_world_homo[:, :3]
+        
+        return points_world
+    
+    def _transform_normals(self, normals):
+        """
+        将法向量从相机坐标系转换到世界坐标系
+        
+        法向量只需要旋转变换，不需要平移
+        
+        参数:
+            normals (numpy.ndarray): 相机坐标系下的法向量，形状为(N, 3)
+            
+        返回:
+            numpy.ndarray: 世界坐标系下的法向量，形状为(N, 3)
+        """
+        # 法向量只需要旋转变换，提取旋转矩阵部分
+        rotation_matrix = self.cam_info.extrinsic_matrix[:3, :3]
+        
+        # 应用旋转变换
+        normals_world = np.dot(normals, rotation_matrix.T)
+        
+        # 重新归一化法向量
+        norms = np.linalg.norm(normals_world, axis=1, keepdims=True)
+        normals_world = normals_world / (norms + 1e-8)  # 避免除零
+        
+        return normals_world
+    def _normalize_pointcloud(self, points):
+        """
+        点云标准化处理流程
+        
+        包含以下步骤：
+        1. 统计滤波去除离群点
+        2. 坐标系转换到世界坐标系
+        
+        参数:
+            points (numpy.ndarray): 输入原始点云
+            
+        返回:
+            tuple: (标准化后的点云, 有效点的索引掩码)
+        """
+        # 第1步：统计滤波
+        filtered_points, camera_normals, filter_mask = self._filter_points(points)
+        
+        # 第2步：坐标转换到世界坐标系
+        transformed_points = self._transform_points(filtered_points)
+        normals = self._transform_normals(camera_normals)
+        
+        return transformed_points, normals, filter_mask
 
     def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path, xyz_limit=None):
         """
@@ -662,25 +796,36 @@ class H5DataGenerator(object):
         num_pnt = points.shape[0]
         if num_pnt == 0:
             raise ValueError('没有前景点，跳过当前场景！')
+        
+        # 点云标准化（包含统计滤波和坐标变换）
+        normalized_points, world_normals, filter_mask = self._normalize_pointcloud(points)
+        
+        # 根据滤波掩码更新物体ID数组
+        obj_ids = obj_ids[filter_mask]
+        
+        # 更新点数
+        num_pnt = normalized_points.shape[0]
+        if num_pnt == 0:
+            raise ValueError('统计滤波后没有剩余点，跳过当前场景！')
             
         # 情况1：点数不足，通过重复采样达到目标数量
         cycle_num = 0
         if num_pnt <= self.target_num_point:
             t = int(1.0 * self.target_num_point / num_pnt) + 1
-            points_tile = np.tile(points, [t, 1])  # 重复点云
-            points = points_tile[:self.target_num_point]
+            points_tile = np.tile(normalized_points, [t, 1])  # 重复点云
+            normalized_points = points_tile[:self.target_num_point]
             obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
             obj_ids = obj_ids_tile[:self.target_num_point] 
             cycle_num = t         
         # 情况2：点数过多，使用最远点采样(FPS)进行下采样
         elif num_pnt > self.target_num_point:
             # 转换为PyTorch张量并移到GPU（如果可用）
-            points_transpose = torch.from_numpy(points.reshape(1, points.shape[0], points.shape[1])).float()
+            points_transpose = torch.from_numpy(normalized_points.reshape(1, normalized_points.shape[0], normalized_points.shape[1])).float()
             points_transpose = points_transpose.cuda()
             
             # 执行最远点采样，保持点云的几何分布
             sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
-            points = points[sampled_idx]
+            normalized_points = normalized_points[sampled_idx]
             obj_ids = obj_ids[sampled_idx]
         else:
             pass
@@ -714,26 +859,19 @@ class H5DataGenerator(object):
             print("label_trans: ", label_trans)
             print("label_rot: ", label_rot)
             raise ValueError(f"物体ID {e} 在标签中未找到，请检查输入数据！")
-                    
-        # === 第6步：法向量估计 ===
-        # 构建Open3D点云对象用于法向量计算
-        pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
         
-        # 使用半径搜索估计每个点的表面法向量
-        # 半径0.015米是经验值，平衡计算精度和效率
-        pc_o3d.estimate_normals(
-            o3d.geometry.KDTreeSearchParamRadius(0.015), 
-            fast_normal_computation=False  # 使用精确计算保证质量
-        )
-        
-        # 统一法向量方向：都指向负Z轴方向（向下）
-        # 这对吸取任务很重要，因为吸盘通常从上往下接近物体
-        pc_o3d.orient_normals_to_align_with_direction(np.array([0., 0., -1.]))
-        pc_o3d.normalize_normals()  # 标准化为单位向量
+        # 如果需要重新对法向量进行采样，需要根据采样索引更新法向量
+        if num_pnt <= self.target_num_point:
+            # 情况1：点数不足时，法向量也需要重复采样
+            world_normals_tile = np.tile(world_normals, [cycle_num, 1])
+            world_normals = world_normals_tile[:self.target_num_point]
+        elif num_pnt > self.target_num_point:
+            # 情况2：点数过多时，法向量也需要按相同索引采样
+            world_normals = world_normals[sampled_idx]
         
         # 提取处理后的数据
-        suction_points = points  # 吸取候选点
-        suction_or = np.array(pc_o3d.normals).astype(np.float32)  # 对应的法向量
+        suction_points = normalized_points  # 吸取候选点
+        suction_or = world_normals.astype(np.float32)  # 对应的法向量（已转换到世界坐标系）
 
         # # 法线可视化
         # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))

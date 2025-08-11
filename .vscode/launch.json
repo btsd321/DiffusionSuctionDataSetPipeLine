@@ -31,9 +31,9 @@
                 "--data_dir",
                 "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
-                "[50,74]",
+                "0",
                 "--scene_list",
-                "[1,50]",
+                "30",
                 "--use_gpu"
             ],
             "env": {
@@ -102,9 +102,9 @@
                 "--data_dir",
                 "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
-                "30",
+                "0",
                 "--scene_list",
-                "[1,12]",
+                "30",
                 "--camera_info_file",
                 "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file",

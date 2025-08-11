@@ -916,50 +916,12 @@ class H5DataGenerator(object):
         print(f"滤波后点云数量: {num_pnt}, 目标点数: {self.target_num_point}")
         print(f"obj_ids shape: {obj_ids.shape}, world_normals shape: {world_normals.shape}")
             
-        # 情况1：点数不足，通过重复采样达到目标数量
-        cycle_num = 0
-        sampled_idx = None  # 初始化采样索引
+        # 确保数组内存连续
         if not normalized_points.flags['C_CONTIGUOUS']:
             normalized_points = np.ascontiguousarray(normalized_points)
             world_normals = np.ascontiguousarray(world_normals)
             obj_ids = np.ascontiguousarray(obj_ids)
         
-        if num_pnt <= self.target_num_point:
-            t = int(1.0 * self.target_num_point / num_pnt) + 1
-            points_tile = np.tile(normalized_points, [t, 1])  # 重复点云
-            normalized_points = points_tile[:self.target_num_point]
-            obj_ids_tile = np.tile(obj_ids, [t])  # 重复物体ID
-            obj_ids = obj_ids_tile[:self.target_num_point] 
-            cycle_num = t
-            
-            # 法向量也需要重复采样
-            world_normals_tile = np.tile(world_normals, [t, 1])
-            world_normals = world_normals_tile[:self.target_num_point]
-            
-        # 情况2：点数过多，使用最远点采样(FPS)进行下采样
-        elif num_pnt > self.target_num_point:
-            # 转换为PyTorch张量并移到GPU（如果可用）
-            points_transpose = torch.from_numpy(normalized_points.reshape(1, normalized_points.shape[0], normalized_points.shape[1])).float()
-            points_transpose = points_transpose.cuda()
-            
-            # 执行最远点采样，保持点云的几何分布
-            sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
-            normalized_points = normalized_points[sampled_idx]
-            obj_ids = obj_ids[sampled_idx]
-            
-            # 法向量也按相同索引采样
-            world_normals = world_normals[sampled_idx]
-        else:
-            # 情况3：点数正好等于目标数量，无需采样
-            pass
-        
-        # 采样后的调试信息
-        print(f"采样后: normalized_points {normalized_points.shape}, obj_ids {obj_ids.shape}, world_normals {world_normals.shape}")
-        
-        # 确保所有数组长度一致
-        assert normalized_points.shape[0] == obj_ids.shape[0] == world_normals.shape[0], \
-            f"数组长度不一致: points {normalized_points.shape[0]}, obj_ids {obj_ids.shape[0]}, normals {world_normals.shape[0]}"
-
         # === 第5步：标签数据对齐 ===
         # 读取物体尺寸标签（可见面积比例）
         individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
@@ -969,85 +931,132 @@ class H5DataGenerator(object):
         # 添加调试信息
         print(f"individual_object_size_lable: {individual_object_size_lable}, type: {type(individual_object_size_lable)}")
         
-        # check code
-        # # 计算obj_ids的最大最小值
-        # max_obj_id = int(np.max(obj_ids))
-        # min_obj_id = int(np.min(obj_ids))
-        # # 计算obj_ids每个整数值的点的个数
-        # obj_id_point_num = []
-        # for i in range(min_obj_id, max_obj_id+1):
-        #     obj_id_point_num.append(int(np.sum(obj_ids == i)))
-        # print(f"循环次数：{cycle_num};物体ID点数分布：{obj_id_point_num}")
+        # 情况1：点数过多，使用最远点采样(FPS)进行下采样
+        if num_pnt > self.target_num_point:
+            print(f"点数过多({num_pnt} > {self.target_num_point})，进行FPS降采样")
+            
+            # 转换为PyTorch张量并移到GPU（如果可用）
+            points_transpose = torch.from_numpy(normalized_points.reshape(1, normalized_points.shape[0], normalized_points.shape[1])).float()
+            points_transpose = points_transpose.cuda()
+            
+            # 执行最远点采样，保持点云的几何分布
+            sampled_idx = furthest_point_sample(points_transpose, self.target_num_point).cpu().numpy().reshape(self.target_num_point)
+            
+            # 按采样索引获取数据
+            normalized_points = normalized_points[sampled_idx]
+            obj_ids = obj_ids[sampled_idx]
+            world_normals = world_normals[sampled_idx]
+            
+            # 标签数据对齐
+            try:
+                points_label_trans = np.array([label_trans[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_rot = np.array([label_rot[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_id = np.array([label_id[obj_ids[i]] for i in range(len(obj_ids))])
+            except (KeyError, IndexError) as e:
+                print("label_trans: ", label_trans)
+                print("label_rot: ", label_rot)
+                raise ValueError(f"物体ID索引错误，请检查输入数据: {str(e)}")
+            
+            # 提取处理后的数据
+            suction_points = normalized_points  # 吸取候选点
+            suction_or = world_normals.astype(np.float32)  # 对应的法向量（已转换到世界坐标系）
+            
+            # 计算各种评分
+            score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
+            score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
+            score_collision = self._cal_score_collision(suction_points, suction_or)
+            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+            
+        # 情况2：点数不足，先计算分数再进行重复采样
+        elif num_pnt < self.target_num_point:
+            print(f"点数不足({num_pnt} < {self.target_num_point})，先计算分数再重采样")
+            
+            # 先对原始数据进行标签对齐
+            try:
+                points_label_trans = np.array([label_trans[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_rot = np.array([label_rot[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_id = np.array([label_id[obj_ids[i]] for i in range(len(obj_ids))])
+            except (KeyError, IndexError) as e:
+                print("label_trans: ", label_trans)
+                print("label_rot: ", label_rot)
+                raise ValueError(f"物体ID索引错误，请检查输入数据: {str(e)}")
+            
+            # 先计算原始点云的各种评分
+            score_seal_original = self._cal_score_seal(normalized_points, obj_ids, points_label_trans, points_label_rot, label_name)
+            score_wrench_original = self._cal_score_wrench(normalized_points, world_normals, points_label_trans, camera_info=self.cam_info)
+            score_collision_original = self._cal_score_collision(normalized_points, world_normals)
+            score_visibility_original = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+            
+            # 计算重复次数
+            t = int(1.0 * self.target_num_point / num_pnt) + 1
+            
+            # 重复采样点云、法向量、物体ID和所有评分
+            points_tile = np.tile(normalized_points, [t, 1])
+            normalized_points = points_tile[:self.target_num_point]
+            
+            world_normals_tile = np.tile(world_normals, [t, 1])
+            world_normals = world_normals_tile[:self.target_num_point]
+            
+            obj_ids_tile = np.tile(obj_ids, [t])
+            obj_ids = obj_ids_tile[:self.target_num_point]
+            
+            # 重复采样标签数据
+            points_label_trans_tile = np.tile(points_label_trans, [t, 1])
+            points_label_trans = points_label_trans_tile[:self.target_num_point]
+            
+            points_label_rot_tile = np.tile(points_label_rot, [t, 1])
+            points_label_rot = points_label_rot_tile[:self.target_num_point]
+            
+            points_label_id_tile = np.tile(points_label_id, [t, 1])
+            points_label_id = points_label_id_tile[:self.target_num_point]
+            
+            # 重复采样所有评分
+            score_seal_tile = np.tile(score_seal_original, [t])
+            score_seal = score_seal_tile[:self.target_num_point]
+            
+            score_wrench_tile = np.tile(score_wrench_original, [t])
+            score_wrench = score_wrench_tile[:self.target_num_point]
+            
+            score_collision_tile = np.tile(score_collision_original, [t])
+            score_collision = score_collision_tile[:self.target_num_point]
+            
+            score_visibility_tile = np.tile(score_visibility_original, [t])
+            score_visibility = score_visibility_tile[:self.target_num_point]
+            
+            # 提取处理后的数据
+            suction_points = normalized_points
+            suction_or = world_normals.astype(np.float32)
+            
+        else:
+            # 情况3：点数正好等于目标数量，无需采样
+            print(f"点数正好等于目标数量({num_pnt} = {self.target_num_point})，无需采样")
+            
+            # 标签数据对齐
+            try:
+                points_label_trans = np.array([label_trans[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_rot = np.array([label_rot[obj_ids[i]] for i in range(len(obj_ids))])
+                points_label_id = np.array([label_id[obj_ids[i]] for i in range(len(obj_ids))])
+            except (KeyError, IndexError) as e:
+                print("label_trans: ", label_trans)
+                print("label_rot: ", label_rot)
+                raise ValueError(f"物体ID索引错误，请检查输入数据: {str(e)}")
+            
+            # 提取处理后的数据
+            suction_points = normalized_points
+            suction_or = world_normals.astype(np.float32)
+            
+            # 计算各种评分
+            score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
+            score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
+            score_collision = self._cal_score_collision(suction_points, suction_or)
+            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
         
-        # 根据采样后的点云，重新对齐所有标签数据
-        # 建立物体ID到索引的映射
-        try:
-            # obj_ids：每个点云中的点对应的id
-
-            # 直接用obj_ids查找对应的标签
-            points_label_trans = np.array([label_trans[obj_ids[i]] for i in obj_ids])
-            points_label_rot = np.array([label_rot[obj_ids[i]] for i in obj_ids])
-            points_label_id = np.array([label_id[obj_ids[i]] for i in obj_ids])
-        except KeyError as e:
-            print("label_trans: ", label_trans)
-            print("label_rot: ", label_rot)
-            raise ValueError(f"物体ID索引错误，请检查输入数据: {str(e)}")
+        # 采样后的调试信息
+        print(f"最终结果: suction_points {suction_points.shape}, obj_ids {obj_ids.shape}, suction_or {suction_or.shape}")
         
-        # 提取处理后的数据
-        suction_points = normalized_points  # 吸取候选点
-        
-        # 测试Debug
-        # 计算suction_points的范围
-        suction_max = np.max(suction_points, axis=0)
-        suction_min = np.min(suction_points, axis=0)
-        print(f"suction_max: {suction_max}, suction_min: {suction_min}")
-        # 测试Debug
-        
-        suction_or = world_normals.astype(np.float32)  # 对应的法向量（已转换到世界坐标系）
-
-        # # 法线可视化
-        # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
-        # show_point_temp.colors = o3d.utility.Vector3dVector([[0, 0, 1]  for i in range(points.shape[0])])
-        # vis_list = [  show_point_temp   ]
-        # # 可视化前100个吸取点的法线方向
-        # for idx in range(len(suction_points[0:100])):
-        #     suction_point = suction_points[idx]
-        #     anno_normal = suction_or[idx]
-        #     suction_score = individual_object_size_lable[idx]
-        #     n = anno_normal
-        #     new_z = n
-        #     new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
-        #     new_y = new_y / np.linalg.norm(new_y)
-        #     new_x = np.cross(new_y, new_z)
-        #     new_x = new_x / np.linalg.norm(new_x)
-        #     new_x = np.expand_dims(new_x, axis=1)
-        #     new_y = np.expand_dims(new_y, axis=1)
-        #     new_z = np.expand_dims(new_z, axis=1)
-        #     rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
-        #     ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
-        #     vis_list.append(ball)
-        # o3d.visualization.draw_geometries(vis_list, width=800, height=600)
-        # 绘制尺寸标签直方图
-        # import matplotlib.pyplot as plt
-        # individual_object_size_lable_temp = individual_object_size_lable*100
-        # plt.hist(individual_object_size_lable_temp.astype(int), bins=100)
-        # plt.title("Histogram of Visibility Score")
-        # plt.xlabel("Value")
-        # plt.ylabel("Frequency")
-        # plt.show()
-
-        # 密封评分
-        score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
-        # self._score_seel_visiualization(score_seal, suction_points, suction_or)
-
-        # 抗扭矩评分
-        score_wrench = self._cal_score_wrench(suction_points, suction_or,  points_label_trans, camera_info=self.cam_info)
-
-        # 碰撞评分
-        score_collision = self._cal_score_collision(suction_points, suction_or)
-
-        # 可见性评分
-        score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+        # 确保所有数组长度一致
+        assert suction_points.shape[0] == obj_ids.shape[0] == suction_or.shape[0], \
+            f"数组长度不一致: points {suction_points.shape[0]}, obj_ids {obj_ids.shape[0]}, normals {suction_or.shape[0]}"
 
         # 调试信息：检查所有评分数组的形状
         print(f"评分数组形状检查:")

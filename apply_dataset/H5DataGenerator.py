@@ -800,7 +800,190 @@ class H5DataGenerator(object):
         # transformed_points, normals, filter_mask = self._filter_z_axis(transformed_points, normals, filter_mask)
         
         return transformed_points, normals, filter_mask
+    
+    def _visualize_pointcloud_with_ids(self, points, obj_ids, point_size=1):
+        """
+        使用matplotlib可视化点云, 根据点所属物体ID进行上色
+        支持50+个物体的颜色区分
+        
+        参数:
+            points (numpy.ndarray): 点云数据，形状为(N, 3)
+            obj_ids (numpy.ndarray): 对应的物体ID，形状为(N,)
+            point_size (float): 点的大小，默认为1
+        """
+        import matplotlib
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import threading
+        import os
+        from matplotlib.colors import ListedColormap
 
+        # 检查是否在主线程和有显示环境
+        is_main_thread = threading.current_thread() is threading.main_thread()
+        has_display = 'DISPLAY' in os.environ or 'WAYLAND_DISPLAY' in os.environ
+
+        # WSL或无显示环境下使用非交互式后端
+        if not is_main_thread or not has_display:
+            matplotlib.use('Agg')
+            print("检测到WSL或无显示环境，自动保存点云可视化图片")
+
+        fig = plt.figure(figsize=(14, 10))  # 增大图形尺寸
+        ax = fig.add_subplot(111, projection='3d')
+
+        # 物体ID着色 - 支持50+个物体的丰富色系
+        unique_ids = np.unique(obj_ids)
+        num_objects = len(unique_ids)
+        
+        print(f"场景中的唯一物体ID: {unique_ids}")
+        print(f"物体ID数量: {num_objects}")
+        
+        # 修复：确保unique_ids中的元素是标量
+        # 如果unique_ids的元素是数组，取第一个元素
+        if unique_ids.ndim > 1 or (unique_ids.size > 0 and isinstance(unique_ids[0], np.ndarray)):
+            unique_ids = np.array([float(uid.item() if hasattr(uid, 'item') else uid[0] if hasattr(uid, '__len__') else uid) 
+                                for uid in unique_ids])
+            print(f"修复后的unique_ids: {unique_ids}")
+        
+        # 创建50+种颜色的组合色系
+        def create_rich_colormap(n_colors):
+            """创建丰富的颜色映射，支持50+种颜色"""
+            
+            # 基础颜色集合 - 20种基础色
+            base_colors = [
+                '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',  # 深蓝、橙、绿、红、紫
+                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',  # 棕、粉、灰、橄榄、青
+                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',  # 浅蓝、浅橙、浅绿、浅红、浅紫
+                '#c49c94', '#f7b6d3', '#c7c7c7', '#dbdb8d', '#9edae5'   # 浅棕、浅粉、浅灰、浅橄榄、浅青
+            ]
+            
+            # 扩展颜色 - 增加更多变体
+            extended_colors = [
+                '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',  # 红橙、青绿、蓝、薄荷绿、浅黄
+                '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',  # 梅花紫、薄荷、香蕉黄、丁香紫、天蓝
+                '#F8C471', '#82E0AA', '#F1948A', '#85C1E9', '#D7BDE2',  # 桃、薄荷绿、珊瑚红、天蓝、淡紫
+                '#A3E4D7', '#F9E79F', '#D5A6BD', '#AED6F1', '#A9DFBF',  # 水绿、浅黄、玫瑰、浅蓝、浅绿
+                '#FAD7A0', '#E8DAEF', '#D6EAF8', '#FADBD8', '#D5F4E6',  # 杏、淡紫、淡蓝、粉、薄荷
+                '#FCF3CF', '#EBDEF0', '#D4EDDA', '#F8D7DA', '#D1ECF1'   # 浅黄、浅紫、浅绿、浅红、浅蓝
+            ]
+            
+            # 合并所有颜色
+            all_colors = base_colors + extended_colors
+            
+            # 如果还需要更多颜色，使用HSV色彩空间生成
+            if n_colors > len(all_colors):
+                import colorsys
+                hsv_colors = []
+                for i in range(n_colors - len(all_colors)):
+                    # 在HSV空间中均匀分布色相，保持高饱和度和亮度
+                    hue = (i * 137.508) % 360 / 360.0  # 使用黄金角度避免相似颜色相邻
+                    saturation = 0.7 + (i % 3) * 0.1   # 饱和度在0.7-0.9之间变化
+                    value = 0.8 + (i % 2) * 0.2        # 亮度在0.8-1.0之间变化
+                    rgb = colorsys.hsv_to_rgb(hue, saturation, value)
+                    hsv_colors.append('#{:02x}{:02x}{:02x}'.format(
+                        int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255)))
+                all_colors.extend(hsv_colors)
+            
+            return all_colors[:n_colors]
+        
+        # 生成颜色映射
+        colors_list = create_rich_colormap(max(50, num_objects))
+        
+        # 为每个物体ID分配颜色
+        id_to_color_idx = {uid: i % len(colors_list) for i, uid in enumerate(unique_ids)}
+        
+        # 创建颜色数组
+        colors = []
+        for obj_id in obj_ids:
+            # 修复：确保obj_id是标量而不是数组
+            scalar_id = None
+            if hasattr(obj_id, 'item'):
+                scalar_id = obj_id.item()  # 如果是numpy标量，转换为Python标量
+            elif hasattr(obj_id, '__len__') and len(obj_id) > 0:
+                scalar_id = obj_id[0]  # 如果是数组，取第一个元素
+            else:
+                scalar_id = float(obj_id)  # 直接转换为float
+            color_idx = id_to_color_idx[scalar_id]
+            color_hex = colors_list[color_idx]
+            # 将十六进制颜色转换为RGB
+            color_rgb = [int(color_hex[i:i+2], 16)/255.0 for i in (1, 3, 5)]
+            colors.append(color_rgb)
+        
+        colors = np.array(colors)
+
+        # 绘制点云
+        scatter = ax.scatter(points[:, 0], points[:, 1], points[:, 2], 
+                            c=colors, s=point_size, alpha=0.8)
+        
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f'Point Cloud with {num_objects} Object IDs')
+
+        # 坐标轴范围自适应
+        max_range = np.array([points[:, 0].max()-points[:, 0].min(), 
+                            points[:, 1].max()-points[:, 1].min(),
+                            points[:, 2].max()-points[:, 2].min()]).max() / 2.0
+        mid_x = (points[:, 0].max()+points[:, 0].min()) * 0.5
+        mid_y = (points[:, 1].max()+points[:, 1].min()) * 0.5
+        mid_z = (points[:, 2].max()+points[:, 2].min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+
+        # 智能图例 - 分组显示
+        if num_objects <= 15:
+            # 少量物体：显示所有
+            for i, uid in enumerate(unique_ids):
+                color_hex = colors_list[i % len(colors_list)]
+                color_rgb = [int(color_hex[j:j+2], 16)/255.0 for j in (1, 3, 5)]
+                ax.scatter([], [], [], color=color_rgb, label=f'ID {int(uid)}', s=50)
+            ax.legend(title='Object IDs', loc='upper right', fontsize=8, 
+                     bbox_to_anchor=(1.15, 1))
+        elif num_objects <= 30:
+            # 中等数量：分两列显示
+            legend_elements = []
+            for i, uid in enumerate(unique_ids):
+                color_hex = colors_list[i % len(colors_list)]
+                color_rgb = [int(color_hex[j:j+2], 16)/255.0 for j in (1, 3, 5)]
+                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                                markerfacecolor=color_rgb, markersize=6, 
+                                                label=f'ID {int(uid)}'))
+            ax.legend(handles=legend_elements, title=f'Objects ({num_objects})', 
+                     loc='upper right', fontsize=6, ncol=2, 
+                     bbox_to_anchor=(1.2, 1))
+        else:
+            # 大量物体：只显示前20个，并标注总数
+            legend_elements = []
+            for i, uid in enumerate(unique_ids[:20]):
+                color_hex = colors_list[i % len(colors_list)]
+                color_rgb = [int(color_hex[j:j+2], 16)/255.0 for j in (1, 3, 5)]
+                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', 
+                                                markerfacecolor=color_rgb, markersize=5, 
+                                                label=f'ID {int(uid)}'))
+            ax.legend(handles=legend_elements, 
+                     title=f'Objects (showing 20/{num_objects})', 
+                     loc='upper right', fontsize=5, ncol=3, 
+                     bbox_to_anchor=(1.25, 1))
+
+        # 调整布局以适应图例
+        plt.tight_layout()
+
+        # 保存或显示
+        output_path = '/tmp/pointcloud_with_ids.png'
+        if not is_main_thread or not has_display:
+            plt.savefig(output_path, dpi=200, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            print(f"点云可视化已保存到: {output_path}")
+            plt.close(fig)
+        else:
+            plt.show()
+
+        # 输出颜色统计信息
+        print(f"\n颜色分配统计:")
+        print(f"总物体数: {num_objects}")
+        print(f"可用颜色数: {len(colors_list)}")
+        print(f"颜色重复使用: {'是' if num_objects > len(colors_list) else '否'}")
+    
     def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path):
         """
         处理单个训练样本，生成完整的H5数据集
@@ -862,6 +1045,7 @@ class H5DataGenerator(object):
         # 计算suction_points的范围
         # 保存点云
         # self._visualize_pointcloud(points)
+        
         origin_points_max = np.max(points, axis=0)  # 形状: (3,)
         origin_points_min = np.min(points, axis=0)  # 形状: (3,)
         
@@ -873,22 +1057,35 @@ class H5DataGenerator(object):
         # 从分割图像中提取每个点对应的物体ID
         # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
         segment_img_int = np.round(segment_img[:, :, 1] / step)
+        # obj_ids 点所在物体在场景中的ID
         obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
-        obj_ids =obj_ids.astype('int')  # 转换为整数类型
-
-        obj_valid_mask = []
-        if self.test_flag:
-            for i in [0, obj_num-1]:
-                obj_valid_mask.append(obj_ids == i)
+        obj_ids = obj_ids.astype('int')  # 转换为整数类型
         
+        # 测试Debug
+        # 测试点云和物体ID的对应关系
+        #self._visualize_pointcloud_with_ids(points, obj_ids)
+        # 测试Debug
+        
+        print(f"点云中第一个点: {points[0]}，对应的物体id: {obj_ids[0]}")
+        print(f"点云中最后一个点: {points[-1]}，对应的物体id: {obj_ids[-1]}")
+        print(f'点云数据points形状：{points.shape}')
+        print(f'物体id数据obj_ids形状：{obj_ids.shape}')
         # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
         if num_pnt == 0:
             raise ValueError('没有前景点，跳过当前场景！')
         
         # 点云标准化（包含统计滤波和坐标变换）， normalized_points形状为(N, 3)
+        # if not points.flags['C_CONTIGUOUS']:
+        #     points = np.ascontiguousarray(points)
+        #     obj_ids = np.ascontiguousarray(obj_ids)
+            
         normalized_points, world_normals, filter_mask = self._normalize_pointcloud(points)
-        
+        # 根据滤波掩码更新物体ID数组 移除obj_ids中filter_mask不为True的点
+
+        obj_ids = obj_ids[filter_mask]
+        print(f'label_trans形状为: {label_trans.shape}')
+
         # 测试Debug
         # 计算suction_points的范围
         points_max = np.max(normalized_points, axis=0)  # 形状: (3,)
@@ -904,20 +1101,15 @@ class H5DataGenerator(object):
         print(f"  filter_mask: {filter_mask.shape[0]} (应该等于原始points)")
         print(f"  filter_mask中True的数量: {np.sum(filter_mask)} (应该等于过滤后points)")
         # 验证掩码正确性
-        assert filter_mask.shape[0] == obj_ids.shape[0], \
-            f"掩码长度不匹配: filter_mask={filter_mask.shape[0]}, obj_ids={obj_ids.shape[0]}"
 
         assert np.sum(filter_mask) == normalized_points.shape[0], \
             f"掩码True数量不匹配: mask中True={np.sum(filter_mask)}, 过滤后点数={normalized_points.shape[0]}"
         # 测试Debug
-        
-        # 根据滤波掩码更新物体ID数组
-        obj_ids = obj_ids[filter_mask]
-        
+
         # 更新点数
         num_pnt = normalized_points.shape[0]
         if num_pnt == 0:
-            raise ValueError('统计滤波后没有剩余点，跳过当前场景！')
+            raise ValueError('滤波后没有剩余点，跳过当前场景！')
         
         # 添加调试信息
         print(f"滤波后点云数量: {num_pnt}, 目标点数: {self.target_num_point}")
@@ -1072,15 +1264,15 @@ class H5DataGenerator(object):
         print(f"  score_collision: {score_collision.shape}")
         print(f"  score_visibility: {score_visibility.shape}")
 
-        # 综合所有分数, 得到最终分数并排序
-        score_all = score_seal * score_wrench * score_collision * score_visibility
+        # # 综合所有分数, 得到最终分数并排序
+        # score_all = score_seal * score_wrench * score_collision * score_visibility
 
-        # 对 score_all（所有吸取点的综合评分）从大到小排序，得到排序后的索引数组 sorted_indices。
-        sorted_indices = np.argsort(score_all)[::-1]
-        score_all_asort = score_all[sorted_indices]
-        # 注意：这里应该使用 suction_points 而不是 points，因为 points 是原始点云，可能长度不同
-        suction_points_asort = suction_points[sorted_indices]
-        suction_or_asort = suction_or[sorted_indices]
+        # # 对 score_all（所有吸取点的综合评分）从大到小排序，得到排序后的索引数组 sorted_indices。
+        # sorted_indices = np.argsort(score_all)[::-1]
+        # score_all_asort = score_all[sorted_indices]
+        # # 注意：这里应该使用 suction_points 而不是 points，因为 points 是原始点云，可能长度不同
+        # suction_points_asort = suction_points[sorted_indices]
+        # suction_or_asort = suction_or[sorted_indices]
         # 打印最高分及该分数对应的点
         # print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
 

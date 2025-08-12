@@ -35,7 +35,7 @@ def create_coordinate_frame(size=0.1):
         size=size, origin=[0, 0, 0])
     return coordinate_frame
 
-def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_axis=True, scores=None, show_heatmap=False):
+def visualize_point_cloud_with_o3d(args, points, normals=None, normal_num=100, show_axis=True, scores=None, show_heatmap=False):
     """
     使用Open3D可视化点云
     红色箭头表示X轴
@@ -123,14 +123,14 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
             image = vis.capture_screen_float_buffer(False)
             plt.figure(figsize=(12, 9))
             plt.imshow(np.asarray(image))
-            plt.title("Point Cloud Visualization (Rendered)")
+            plt.title(f"Point Cloud Visualization of {args.vision_score_type}")
             plt.axis('off')
             plt.show()
             vis.destroy_window()
         else:
             # 非WSL环境，尝试标准可视化
             o3d.visualization.draw_geometries(geometries, 
-                                            window_name="Point Cloud Visualization",
+                                            window_name=f"Point Cloud Visualization of {args.vision_score_type}",
                                             width=800, height=600)
     except Exception as e:
         print(f"Open3D可视化失败: {e}")
@@ -152,7 +152,7 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
             else:
                 print("无法提取点云数据进行matplotlib可视化")
 
-def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100, scores=None, show_heatmap=False):
+def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num=100, scores=None, show_heatmap=False):
     """
     使用Matplotlib可视化点云
     """
@@ -166,7 +166,7 @@ def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100, 
                            c=scores, cmap='coolwarm', s=4, alpha=0.8)
         # 添加颜色条
         cbar = plt.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
-        cbar.set_label('Score Value', rotation=270, labelpad=15)
+        cbar.set_label(f'Score Value of {args.vision_score_type}', rotation=270, labelpad=15)
         print(f"已应用热力图颜色映射，分数范围: {scores.min():.4f} - {scores.max():.4f}")
     else:
         # 使用默认颜色
@@ -206,7 +206,7 @@ def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100, 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    ax.set_title('Point Cloud Visualization with Heatmap' if show_heatmap else 'Point Cloud Visualization')
+    ax.set_title(f'Point Cloud Visualization of {args.vision_score_type}')
     
     plt.show()
 
@@ -228,7 +228,7 @@ def main():
         print(f"文件 {h5_file_path} 不存在，请检查路径。")
         return
     point_cloud, normals, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable = read_h5_file(h5_file_path)
-    
+    suction_feasibility_scores = suction_feasibility_scores.astype(np.float32)
     # 剔除重复点
     unique_points, unique_indices = np.unique(point_cloud, axis=0, return_index=True)
     if len(unique_points) < point_cloud.shape[0]:
@@ -278,10 +278,10 @@ def main():
     # 获取当前可视化分数类型对应的分数
     score_map = {
         'suction_score': suction_score,
-        'suction_seal_score': suction_seal_scores[sorted_indices],
-        'suction_wrench_score': suction_wrench_scores[sorted_indices],
-        'suction_feasibility_score': suction_feasibility_scores[sorted_indices],
-        'individual_object_size_lable': individual_object_size_lable[sorted_indices]
+        'suction_seal_score': suction_seal_scores,
+        'suction_wrench_score': suction_wrench_scores,
+        'suction_feasibility_score': suction_feasibility_scores,
+        'individual_object_size_lable': individual_object_size_lable
     }
     current_scores = score_map.get(args.vision_score_type, suction_score)
     
@@ -320,14 +320,14 @@ def main():
     if args.method == 'o3d':
         print("使用Open3D可视化点云...")
         try:
-            visualize_point_cloud_with_o3d(point_cloud, vision_normals, args.vision_normal_num, args.show_axis, current_scores, args.show_heatmap)
+            visualize_point_cloud_with_o3d(args, point_cloud, vision_normals, args.vision_normal_num, args.show_axis, current_scores, args.show_heatmap)
         except Exception as e:
             print(f"Open3D可视化失败: {e}")
             print("尝试使用matplotlib可视化...")
-            visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+            visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
     else:
         print("使用Matplotlib可视化点云...")
-        visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+        visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
     
     # 保持直方图窗口打开
     if args.show_heatmap:

@@ -1,8 +1,16 @@
 """
-本文件用于批量读取物理仿真结果csv, 计算物体在相机坐标系下的位姿, 并生成GT(Ground Truth)标注文件, 适用于数据集标注自动生成流程。
+本文件用于批量读取物理仿真结果csv, 计算物体在世界坐标系下的位姿, 并生成GT(Ground Truth)标注文件。
+支持多线程并行处理，适用于大规模数据集标注自动生成流程。
+
+主要功能:
+- 并行处理多个循环和场景的GT生成
+- 支持自定义线程数量
+- 详细的进度显示和错误处理
+- 直接返回世界坐标系下的位姿参数
 
 作者: Huang Dingtao
 校验: Huang Dingtao
+更新: 添加多线程支持
 """
 
 import os
@@ -42,6 +50,7 @@ parser.add_argument('--cycle_list', type=str, required=True,
 parser.add_argument('--scene_list', type=str, required=True, 
                    help='场景编号，支持格式: "5"(单个), "[1,10]"(区间), "{1,3,5}"(列表)')
 parser.add_argument('--camera_info_file', type=str, default='camera_info.yaml', help='相机参数配置文件路径')
+parser.add_argument('--max_workers', type=int, default=4, help='线程池最大线程数')
 FLAGS = parser.parse_args()
 
 # 获取数据集根目录
@@ -56,6 +65,8 @@ import json
 import nibabel.quaternions as nq
 import yaml
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # 解析循环编号和场景编号
 try:
@@ -104,79 +115,125 @@ def read_csv(csv_path):
 
 def generate_gt(pose_world):
     ''' 
-    生成相机坐标系下的位姿
+    直接返回世界坐标系下的位姿
     输入参数:
         pose_world: 零件在世界坐标系下的位姿 (N, 7) [x, y, z, qx, qy, qz, qw]
     返回:
-        pose_camera: 零件在相机坐标系下的位姿 (N, 12) [x, y, z, R1~R9]
+        pose_world_matrix: 零件在世界坐标系下的位姿 (N, 12) [x, y, z, R1~R9]
     '''  
-
-    # 方式1: 使用外参矩阵进行变换（推荐）
-    if cam_info.extrinsic_matrix is not None:
-        # 从外参矩阵中提取旋转和平移
-        extrinsic = cam_info.extrinsic_matrix  # 4x4外参矩阵
-        R_w2c = extrinsic[:3, :3]  # 世界到相机的旋转矩阵
-        t_w2c = extrinsic[:3, 3]   # 世界到相机的平移向量
-        
-        # 世界坐标系下的平移和旋转
-        t_world = pose_world[:,:3]                       # 物体在世界坐标系下的平移
-        quat_world = pose_world[:,3:]                    # 物体在世界坐标系下的旋转(四元数)
-        R_world = [nq.quat2mat(quat) for quat in quat_world]  # 转换为旋转矩阵
-
-        # 生成相机坐标系下的平移和旋转
-        t_camera = np.array([np.dot(R_w2c, t) + t_w2c for t in t_world])  # 物体在相机坐标系下的平移
-        R_camera = np.array([np.dot(R_w2c, R.reshape(3,3)).reshape(9) for R in R_world])  # 物体在相机坐标系下的旋转
-        
-    else:
-        # 方式2: 使用四元数和平移向量（备选方案）
-        print("警告: 外参矩阵不可用，使用四元数和平移向量进行变换")
-        # 相机外参
-        t_c2w = np.array(CAMERA_LOCATION).reshape(1, 3)  # 相机在世界坐标系下的平移
-        quat_c2w = np.array(CAMERA_ROTATION)             # 相机在世界坐标系下的旋转(四元数)
-        R_c2w  = nq.quat2mat(quat_c2w).reshape(3,3)      # 转换为旋转矩阵
-
-        # 世界坐标系下的平移和旋转
-        t_world = pose_world[:,:3]                       # 物体在世界坐标系下的平移
-        quat_world = pose_world[:,3:]                    # 物体在世界坐标系下的旋转(四元数)
-        R_world = [nq.quat2mat(quat) for quat in quat_world]  # 转换为旋转矩阵
-
-        # 生成相机坐标系下的平移和旋转
-        t_camera = np.array([(np.dot(R_c2w, t) + t_c2w).reshape(3) \
-                          for t in t_world])            # 物体在相机坐标系下的平移
-        R_camera = np.array([np.dot(R_c2w, R.reshape(3,3)).reshape(9) \
-                          for R in R_world])            # 物体在相机坐标系下的旋转(展平成9维)
     
-    pose_camera = np.concatenate((t_camera, R_camera),axis=-1)  # 拼接为最终结果
-    return pose_camera
+    # 直接使用世界坐标系下的平移和旋转，无需坐标系转换
+    t_world = pose_world[:,:3]                       # 物体在世界坐标系下的平移
+    quat_world = pose_world[:,3:]                    # 物体在世界坐标系下的旋转(四元数)
+    R_world = np.array([nq.quat2mat(quat).reshape(9) for quat in quat_world])  # 转换为旋转矩阵并展平
+    
+    # 拼接平移和旋转为最终结果
+    pose_world_matrix = np.concatenate((t_world, R_world), axis=-1)
+    return pose_world_matrix
+
+def process_single_scene(cycle_id, scene_id):
+    """
+    处理单个场景的GT生成
+    
+    参数:
+        cycle_id: 循环编号
+        scene_id: 场景编号
+        
+    返回:
+        tuple: (cycle_id, scene_id, success, error_msg)
+    """
+    try:
+        # 构建当前循环和场景的csv路径
+        csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id), 
+                               "{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))
+        
+        # 检查输入文件是否存在
+        if not os.path.exists(csv_path):
+            return (cycle_id, scene_id, False, f"输入文件不存在: {csv_path}")
+        
+        # 读取数据
+        name_temp, index, pose_world = read_csv(csv_path)
+        
+        # 生成世界坐标系下的位姿
+        pose_world_matrix = generate_gt(pose_world)
+        
+        # 构建csv表头
+        headers = ["class_name", "id", "x", "y", "z", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9"]
+        
+        # 拼接物体名称、索引和位姿
+        temp = np.concatenate((name_temp.reshape(-1, 1), index.reshape(-1, 1)), axis=-1)
+        temp = np.concatenate((temp, pose_world_matrix), axis=-1)
+        result = temp.tolist()
+        
+        assert len(result[0]) == len(headers)
+        
+        # 构建保存路径
+        save_path = os.path.join(GT_PATH, 'cycle_{:0>4}'.format(cycle_id), "{:0>3}".format(scene_id))
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        file_loc = os.path.join(save_path, '{:0>3}.csv'.format(scene_id))
+        
+        # 写入csv文件
+        with open(file_loc, 'w', newline='') as f:
+            f_csv = csv.writer(f)
+            f_csv.writerow(headers)
+            f_csv.writerows(result)
+        
+        return (cycle_id, scene_id, True, f"成功处理场景 cycle_{cycle_id:04d}/scene_{scene_id:03d}")
+        
+    except Exception as e:
+        error_msg = f"处理场景 cycle_{cycle_id:04d}/scene_{scene_id:03d} 时发生错误: {str(e)}"
+        return (cycle_id, scene_id, False, error_msg)
 
 if __name__ == "__main__":
-    # 遍历所有循环和场景, 批量生成GT
+    print(f"开始批量生成GT，使用 {FLAGS.max_workers} 个线程")
+    print(f"循环范围: {CYCLE_idx_list}")
+    print(f"场景范围: {SCENE_idx_list}")
+    
+    # 创建所有需要处理的任务列表
+    tasks = []
     for cycle_id in CYCLE_idx_list:
         for scene_id in SCENE_idx_list:
-            # 构建当前循环和场景的csv路径
-            csv_path = os.path.join(OUTDIR_physics_result_dir, 'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id), "{:0>3}.csv".format(scene_id))              
-            name_temp, index, pose_world = read_csv(csv_path)
+            tasks.append((cycle_id, scene_id))
+    
+    print(f"总共需要处理 {len(tasks)} 个场景")
+    
+    # 统计变量
+    success_count = 0
+    error_count = 0
+    completed_cycles = set()
+    
+    # 使用线程池执行任务
+    with ThreadPoolExecutor(max_workers=FLAGS.max_workers) as executor:
+        # 提交所有任务
+        future_to_task = {executor.submit(process_single_scene, cycle_id, scene_id): (cycle_id, scene_id) 
+                         for cycle_id, scene_id in tasks}
+        
+        # 处理完成的任务
+        for future in as_completed(future_to_task):
+            cycle_id, scene_id, success, message = future.result()
             
-            # 生成相机坐标系下的位姿
-            pose_camera = generate_gt(pose_world)
-            # 构建csv表头
-            headers = ["class_name","id","x", "y", "z", "R1", "R2", "R3", "R4","R5", "R6", "R7", "R8","R9"]
-            # 拼接物体名称、索引和位姿
-            temp = np.concatenate((name_temp.reshape(-1,1), index.reshape(-1,1)),axis=-1)
-            temp = np.concatenate((temp, pose_camera),axis=-1)
-            result = temp.tolist()
+            if success:
+                success_count += 1
+                completed_cycles.add(cycle_id)
+                print(f"✓ {message}")
+            else:
+                error_count += 1
+                print(f"✗ {message}")
             
-            assert len(result[0]) == len(headers)
-            # 构建保存路径
-            save_path = os.path.join(GT_PATH,'cycle_{:0>4}'.format(cycle_id),"{:0>3}".format(scene_id))
-            if not os.path.exists(save_path):
-                os.makedirs(save_path)
-            file_loc = save_path + '/' + '{:0>3}'.format(scene_id) + '.csv'
-            
-            # 写入csv文件
-            with open(file_loc, 'w', newline='') as f:
-                    f_csv = csv.writer(f)
-                    f_csv.writerow(headers)
-                    f_csv.writerows(result)
-        print(f'第 {cycle_id} 个循环已完成')
-    print('全部完成')
+            # 显示进度
+            total_processed = success_count + error_count
+            progress = (total_processed / len(tasks)) * 100
+            print(f"进度: {total_processed}/{len(tasks)} ({progress:.1f}%)")
+    
+    # 输出完成统计
+    print("\n" + "="*50)
+    print("批量处理完成!")
+    print(f"成功处理: {success_count} 个场景")
+    print(f"失败处理: {error_count} 个场景")
+    print(f"完成的循环: {sorted(completed_cycles)}")
+    
+    if error_count == 0:
+        print("🎉 全部场景处理成功!")
+    else:
+        print(f"⚠️  有 {error_count} 个场景处理失败，请检查错误信息")

@@ -51,6 +51,7 @@ fi
 # --camera_info_file: 相机配置文件路径
 python "$WORK_SPACE_DIR/generate_dataset/gt_utils.py" \
     --data_dir "/home/lixinlong/Data/Diffusion_Suction_DataSet" \
-    --cycle_list "[31,49]" \
+    --cycle_list "[0,49]" \
     --scene_list "[1,50]" \
+    --max_workers 8 \
     --camera_info_file "$WORK_SPACE_DIR/config/camera_info.yaml"

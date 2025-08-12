@@ -187,27 +187,54 @@ def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num
                    [point[2], end_point[2]], 
                    color='yellow', linewidth=2.0)  # 黄色法向量，更容易区分
     
-    # 添加坐标轴
-    # 绘制坐标轴箭头
-    max_range = np.array([points[:, 0].max()-points[:, 0].min(), 
-                          points[:, 1].max()-points[:, 1].min(),
-                          points[:, 2].max()-points[:, 2].min()]).max() / 2.0
+    # 保持原始点云的长宽高比
+    # 计算点云的边界
+    x_min, x_max = points[:, 0].min(), points[:, 0].max()
+    y_min, y_max = points[:, 1].min(), points[:, 1].max()
+    z_min, z_max = points[:, 2].min(), points[:, 2].max()
     
-    mid_x = (points[:, 0].max()+points[:, 0].min()) * 0.5
-    mid_y = (points[:, 1].max()+points[:, 1].min()) * 0.5
-    mid_z = (points[:, 2].max()+points[:, 2].min()) * 0.5
+    # 计算各轴的范围
+    x_range = x_max - x_min
+    y_range = y_max - y_min
+    z_range = z_max - z_min
     
-    # 绘制坐标轴
-    axis_length = max_range * 0.5
-    ax.quiver(mid_x, mid_y, mid_z, axis_length, 0, 0, color='red', arrow_length_ratio=0.1)
-    ax.quiver(mid_x, mid_y, mid_z, 0, axis_length, 0, color='green', arrow_length_ratio=0.1)
-    ax.quiver(mid_x, mid_y, mid_z, 0, 0, axis_length, color='blue', arrow_length_ratio=0.1)
+    # 找到最大范围，作为参考
+    max_range = max(x_range, y_range, z_range)
     
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
+    # 计算各轴的中心点
+    x_center = (x_max + x_min) * 0.5
+    y_center = (y_max + y_min) * 0.5
+    z_center = (z_max + z_min) * 0.5
+    
+    # 设置各轴的显示范围，保持等比例
+    half_range = max_range * 0.6  # 稍微扩大一点显示范围
+    ax.set_xlim(x_center - half_range, x_center + half_range)
+    ax.set_ylim(y_center - half_range, y_center + half_range)
+    ax.set_zlim(z_center - half_range, z_center + half_range)
+    
+    # 设置坐标轴等比例显示
+    ax.set_box_aspect([1,1,1])  # 设置xyz轴的比例为1:1:1
+    
+    # 添加坐标轴箭头（基于实际数据范围）
+    axis_length = max_range * 0.3
+    ax.quiver(x_center, y_center, z_center, axis_length, 0, 0, color='red', arrow_length_ratio=0.1, linewidth=3)
+    ax.quiver(x_center, y_center, z_center, 0, axis_length, 0, color='green', arrow_length_ratio=0.1, linewidth=3)
+    ax.quiver(x_center, y_center, z_center, 0, 0, axis_length, color='blue', arrow_length_ratio=0.1, linewidth=3)
+    
+    # 添加坐标轴标签
+    ax.text(x_center + axis_length * 1.1, y_center, z_center, 'X', color='red', fontsize=12, fontweight='bold')
+    ax.text(x_center, y_center + axis_length * 1.1, z_center, 'Y', color='green', fontsize=12, fontweight='bold')
+    ax.text(x_center, y_center, z_center + axis_length * 1.1, 'Z', color='blue', fontsize=12, fontweight='bold')
+    
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
     ax.set_title(f'Point Cloud Visualization of {args.vision_score_type}')
     
+    # 添加网格
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
     plt.show()
 
 def main():

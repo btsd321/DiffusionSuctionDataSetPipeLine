@@ -199,7 +199,7 @@ class H5DataGenerator(object):
         # 可视化开关，WSL环境中建议关闭
         self.test_flag = test_flag
 
-    def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm=False, xyz_limit=None):
+    def _depth_to_pointcloud_optimized(self, us, vs, zs, to_mm=False):
         """
         将深度图像像素坐标转换为3D点云坐标
         
@@ -252,36 +252,6 @@ class H5DataGenerator(object):
         Zcs = np.reshape(Zcs, (-1, 1))
         # blender中相机朝向为Z轴的负方向，因此在相机坐标系中的坐标应该取反
         points = np.concatenate([-Xcs, -Ycs, -Zcs], axis=-1)
-        
-        # # 可选：根据xyz范围裁剪点云，去除工作空间外的无关点
-        # if xyz_limit is not None:
-        #     # X轴裁剪
-        #     if xyz_limit[0] is not None:
-        #         xmin, xmax = xyz_limit[0]
-        #         if xmin is not None:
-        #             idx = np.where(points[:, 0] > xmin)
-        #             points = points[idx]
-        #         if xmax is not None:
-        #             idx = np.where(points[:, 0] < xmax)
-        #             points = points[idx]
-        #     # Y轴裁剪
-        #     if xyz_limit[1] is not None:
-        #         ymin, ymax = xyz_limit[1]
-        #         if ymin is not None:
-        #             idx = np.where(points[:, 1] > ymin)
-        #             points = points[idx]
-        #         if ymax is not None:
-        #             idx = np.where(points[:, 1] < ymax)
-        #             points = points[idx]
-        #     # Z轴裁剪
-        #     if xyz_limit[2] is not None:
-        #         zmin, zmax = xyz_limit[2]
-        #         if zmin is not None:
-        #             idx = np.where(points[:, 2] > zmin)
-        #             points = points[idx]
-        #         if zmax is not None:
-        #             idx = np.where(points[:, 2] < zmax)
-        #             points = points[idx]
                     
         return points
 
@@ -553,8 +523,8 @@ class H5DataGenerator(object):
         计算碰撞评分，碰撞评分用于评估吸取点与其他物体的几何碰撞情况
         '''
         # 计算吸取点的可行性分数(碰撞检测)
-        height = 0.1
-        radius = 0.01
+        height = 0.15
+        radius = 0.03
         scence_point = suction_points
         suction_feasibility_scores = []
         for index_temp,suction_points_temp in enumerate(suction_points):
@@ -565,7 +535,7 @@ class H5DataGenerator(object):
             target_yz = target[:, 1:3]
             target_r = np.linalg.norm(target_yz, axis=-1)
             mask1 = target_r < radius
-            mask2 = ((target[:,0] > 0.005) & (target[:,0] < height))
+            mask2 = ((target[:,0] > 0.01) & (target[:,0] < height))
             mask = np.any(mask1 & mask2)
             suction_feasibility_scores.append(mask)
         suction_feasibility_scores = ~np.array(suction_feasibility_scores)
@@ -591,75 +561,67 @@ class H5DataGenerator(object):
     
     def _filter_points(self, points):
         """
-        使用统计滤波去除点云中的离群点
+        使用半径滤波去除点云中的离群点
         
-        统计滤波的原理：
-        1. 对每个点，计算它到最近k个邻居点的平均距离
-        2. 计算所有点的平均距离的均值和标准差
-        3. 移除距离超过 (均值 + std_ratio * 标准差) 的点
+        半径滤波的原理：
+        1. 对每个点，在指定半径内搜索邻居点
+        2. 如果邻居点数量少于指定阈值，则认为该点是离群点
+        3. 移除所有离群点
         
         参数:
             points (numpy.ndarray): 输入点云，形状为(N, 3)
             
         返回:
-            tuple: (过滤后的点云, 有效点的索引掩码)
+            tuple: (过滤后的点云, 法向量, 有效点的索引掩码)
         """
-        if points.shape[0] < 10:  # 点数太少时跳过滤波
-            return points, np.ones(points.shape[0], dtype=bool)
-        
         try:
             # 创建Open3D点云对象
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points)
             
-            # 应用统计滤波
-            # nb_neighbors: 用于计算每个点平均距离的邻居点数量
-            # std_ratio: 标准差倍数，用于确定离群点阈值
-            pcd_filtered, inlier_indices = pcd.remove_statistical_outlier(
-                nb_neighbors=20,    # 考虑20个最近邻
-                std_ratio=1.0       # 超过1倍标准差的点被认为是离群点
+            # 应用半径滤波
+            pcd_filtered, inlier_indices = pcd.remove_radius_outlier(
+                nb_points=16, radius=0.01
             )
             
             # 转换回numpy数组
             filtered_points = np.asarray(pcd_filtered.points)
             
-            # 创建索引掩码
+            # 创建正确的索引掩码
             inlier_mask = np.zeros(points.shape[0], dtype=bool)
             inlier_mask[inlier_indices] = True
             
-            # print(f"统计滤波: 原始点数 {points.shape[0]}, 过滤后点数 {filtered_points.shape[0]}, "
-            #       f"移除离群点 {points.shape[0] - filtered_points.shape[0]} 个")
+            print(f"半径滤波: 原始点数 {points.shape[0]}, 过滤后点数 {filtered_points.shape[0]}")
+            print(f"掩码统计: True={np.sum(inlier_mask)}, False={np.sum(~inlier_mask)}")
             
-            # 计算法向量
-            # 构建Open3D点云对象用于法向量计算
-            pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(filtered_points))
-            
-            # 使用半径搜索估计每个点的表面法向量
-            # 半径0.015米是经验值，平衡计算精度和效率
-            pc_o3d.estimate_normals(
-                o3d.geometry.KDTreeSearchParamRadius(0.015), 
-                fast_normal_computation=False  # 使用精确计算保证质量
-            )
-            
-            # 计算相机坐标系下地球方向
-            world_down = np.array([0., 0., -1.])  # 世界坐标系下的向下方向
-            w2c_rotation = self.cam_info.extrinsic_matrix[:3, :3]  # 提取旋转部分
-            cam_down = np.matmul(w2c_rotation, world_down)
-            
-            # 统一法向量方向：都指向世界坐标系的负Z轴方向（向下）
-            # 这对吸取任务很重要，因为吸盘通常从上往下接近物体
-            pc_o3d.orient_normals_to_align_with_direction(cam_down)
-            pc_o3d.normalize_normals()  # 标准化为单位向量
-            
-            # 提取处理后的数据
-            suction_or = np.array(pc_o3d.normals).astype(np.float32)  # 对应的法向量
-
+            # 计算法向量（只对过滤后的点）
+            if filtered_points.shape[0] > 0:
+                pc_o3d = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(filtered_points))
+                pc_o3d.estimate_normals(
+                    o3d.geometry.KDTreeSearchParamRadius(0.015), 
+                    fast_normal_computation=False
+                )
+                
+                # 计算相机坐标系下地球方向并统一法向量
+                world_down = np.array([0., 0., -1.])
+                w2c_rotation = self.cam_info.extrinsic_matrix[:3, :3]
+                cam_down = np.matmul(w2c_rotation, world_down)
+                pc_o3d.orient_normals_to_align_with_direction(cam_down)
+                pc_o3d.normalize_normals()
+                
+                suction_or = np.array(pc_o3d.normals).astype(np.float32)
+            else:
+                suction_or = np.array([]).reshape(0, 3)
             
             return filtered_points, suction_or, inlier_mask
             
         except Exception as e:
-            print(f"统计滤波失败，使用原始点云: {e}")
-            return points, np.ones(points.shape[0], dtype=bool)
+            print(f"半径滤波失败，使用原始点云: {e}")
+            identity_mask = np.ones(points.shape[0], dtype=bool)
+            dummy_normals = np.zeros((points.shape[0], 3), dtype=np.float32)
+            dummy_normals[:, 2] = -1
+            return points, dummy_normals, identity_mask
+                
     
     def _transform_points(self, points):
         """
@@ -713,6 +675,40 @@ class H5DataGenerator(object):
         normals_world = normals_world / (norms + 1e-8)  # 避免除零
         
         return normals_world
+    
+    def _filter_z_axis(self, points, normals, prev_filter_mask, z_threshold = 0.7):
+        """
+        根据Z轴坐标过滤点云，剔除Z轴坐标大于阈值的点
+        
+        参数:
+            points (numpy.ndarray): 输入点云，形状为(N, 3)
+            normals (numpy.ndarray): 对应的法向量，形状为(N, 3)
+            prev_filter_mask (numpy.ndarray): 之前的过滤掩码，用于累积过滤效果
+            
+        返回:
+            tuple: (过滤后的点云, 过滤后的法向量, 更新后的过滤掩码)
+        """
+        
+        # 创建Z轴过滤掩码：保留Z坐标小于等于阈值的点
+        z_filter_mask = points[:, 2] <= z_threshold
+        
+        # 过滤点云和法向量
+        filtered_points = points[z_filter_mask]
+        filtered_normals = normals[z_filter_mask]
+        
+        # 更新累积过滤掩码
+        # 创建新的累积掩码，标记哪些原始点被保留
+        new_filter_mask = np.zeros_like(prev_filter_mask, dtype=bool)
+        
+        # 在之前被保留的点中，进一步标记通过Z轴过滤的点
+        prev_indices = np.where(prev_filter_mask)[0]
+        z_passed_indices = prev_indices[z_filter_mask]
+        new_filter_mask[z_passed_indices] = True
+        
+        print(f"Z轴过滤: 输入点数 {points.shape[0]}, 过滤后点数 {filtered_points.shape[0]}, "
+              f"移除 {points.shape[0] - filtered_points.shape[0]} 个Z>{z_threshold}m的点")
+        
+        return filtered_points, filtered_normals, new_filter_mask
     
     def _visualize_pointcloud(self, points):
         """
@@ -800,14 +796,12 @@ class H5DataGenerator(object):
         transformed_points = self._transform_points(filtered_points)
         normals = self._transform_normals(camera_normals)
         
-        # 测试Debug
-        # 使用matplotlib可视化点云
-        # self._visualize_pointcloud(transformed_points)
-        # 测试Debug
+        # # 第3步：剔除Z轴坐标大于0.7的点
+        # transformed_points, normals, filter_mask = self._filter_z_axis(transformed_points, normals, filter_mask)
         
         return transformed_points, normals, filter_mask
 
-    def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path, xyz_limit=None):
+    def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path):
         """
         处理单个训练样本，生成完整的H5数据集
         
@@ -862,12 +856,12 @@ class H5DataGenerator(object):
         zs = depth_img[valid_mask]
         
         # 执行3D重建：像素坐标 + 深度 → 3D点云
-        points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False, xyz_limit=xyz_limit)
+        points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
         
         # 测试Debug
         # 计算suction_points的范围
         # 保存点云
-        self._visualize_pointcloud(points)
+        # self._visualize_pointcloud(points)
         origin_points_max = np.max(points, axis=0)  # 形状: (3,)
         origin_points_min = np.min(points, axis=0)  # 形状: (3,)
         
@@ -902,6 +896,19 @@ class H5DataGenerator(object):
         
         print(f"normalized_points各轴最大值: X={points_max[0]:.4f}, Y={points_max[1]:.4f}, Z={points_max[2]:.4f}")
         print(f"normalized_points各轴最小值: X={points_min[0]:.4f}, Y={points_min[1]:.4f}, Z={points_min[2]:.4f}")
+        # 在第4步之后，第902行之前添加验证
+        print(f"数据一致性验证:")
+        print(f"  原始points: {points.shape[0]}")
+        print(f"  过滤后normalized_points: {normalized_points.shape[0]}")
+        print(f"  原始obj_ids: {obj_ids.shape[0]} (应该等于原始points)")
+        print(f"  filter_mask: {filter_mask.shape[0]} (应该等于原始points)")
+        print(f"  filter_mask中True的数量: {np.sum(filter_mask)} (应该等于过滤后points)")
+        # 验证掩码正确性
+        assert filter_mask.shape[0] == obj_ids.shape[0], \
+            f"掩码长度不匹配: filter_mask={filter_mask.shape[0]}, obj_ids={obj_ids.shape[0]}"
+
+        assert np.sum(filter_mask) == normalized_points.shape[0], \
+            f"掩码True数量不匹配: mask中True={np.sum(filter_mask)}, 过滤后点数={normalized_points.shape[0]}"
         # 测试Debug
         
         # 根据滤波掩码更新物体ID数组

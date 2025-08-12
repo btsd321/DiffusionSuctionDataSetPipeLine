@@ -50,41 +50,50 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
     if show_heatmap and scores is not None:
         # 归一化分数到[0,1]范围
         scores_norm = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+        
         # 创建颜色映射：蓝色(低分) -> 绿色(中分) -> 红色(高分)
         colors = np.zeros((len(points), 3))
         for i, score in enumerate(scores_norm):
             if score < 0.5:
-                # 蓝色到绿色
+                # 蓝色到绿色的渐变
                 colors[i] = [0, 2*score, 1-2*score]
             else:
-                # 绿色到红色
+                # 绿色到红色的渐变
                 colors[i] = [2*(score-0.5), 1-2*(score-0.5), 0]
+        
         pcd.colors = o3d.utility.Vector3dVector(colors)
+        print(f"已应用热力图颜色映射，分数范围: {scores.min():.4f} - {scores.max():.4f}")
+    else:
+        # 如果不显示热力图，使用默认颜色
+        default_color = np.array([[0.5, 0.5, 0.5]] * len(points))  # 灰色
+        pcd.colors = o3d.utility.Vector3dVector(default_color)
     
     # 创建可视化几何体列表
     geometries = [pcd]
+    
     # 添加法向量线条（如果提供）
     if normals is not None:
         # 只显示前normal_num个法向量
         arrow_points = []
         lines = []
-        colors = []
-        scale = 0.1  # 法向量长度加长
-        thickness = 3  # 线条粗细（通过重复线条实现视觉加粗）
+        colors_normal = []
+        scale = 0.1  # 法向量长度
+        
         for i in range(min(normal_num, len(points))):
             start = points[i]
             end = points[i] + normals[i] * scale
-            for t in range(thickness):
-                arrow_points.append(start)
-                arrow_points.append(end)
-                lines.append([2*(i*thickness+t), 2*(i*thickness+t)+1])
-                colors.append([0, 0, 1])  # 蓝色
+            arrow_points.append(start)
+            arrow_points.append(end)
+            lines.append([2*i, 2*i+1])
+            colors_normal.append([1, 1, 0])  # 黄色法向量，更容易区分
+            
         if arrow_points:
             line_set = o3d.geometry.LineSet()
             line_set.points = o3d.utility.Vector3dVector(np.array(arrow_points))
             line_set.lines = o3d.utility.Vector2iVector(lines)
-            line_set.colors = o3d.utility.Vector3dVector(colors)
+            line_set.colors = o3d.utility.Vector3dVector(colors_normal)
             geometries.append(line_set)
+    
     # 添加坐标轴
     if show_axis:
         coordinate_frame = create_coordinate_frame()
@@ -143,15 +152,25 @@ def visualize_point_cloud_with_o3d(points, normals=None, normal_num=100, show_ax
             else:
                 print("无法提取点云数据进行matplotlib可视化")
 
-def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100):
+def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100, scores=None, show_heatmap=False):
     """
     使用Matplotlib可视化点云
     """
-    fig = plt.figure(figsize=(10, 8))
+    fig = plt.figure(figsize=(12, 9))
     ax = fig.add_subplot(111, projection='3d')
     
     # 绘制点云
-    ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=1)
+    if show_heatmap and scores is not None:
+        # 使用热力图颜色
+        scatter = ax.scatter(points[:, 0], points[:, 1], points[:, 2], 
+                           c=scores, cmap='coolwarm', s=4, alpha=0.8)
+        # 添加颜色条
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.5, aspect=5)
+        cbar.set_label('Score Value', rotation=270, labelpad=15)
+        print(f"已应用热力图颜色映射，分数范围: {scores.min():.4f} - {scores.max():.4f}")
+    else:
+        # 使用默认颜色
+        ax.scatter(points[:, 0], points[:, 1], points[:, 2], s=20, c='gray', alpha=0.8)
     
     # 添加法向量
     if normals is not None:
@@ -160,13 +179,13 @@ def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100):
         normal_vectors = normals[:normal_num]
         
         # 绘制法向量（按一定比例缩放）
-        scale = 0.1  # 增加法向量长度
+        scale = 0.1  # 法向量长度
         for i, (point, normal) in enumerate(zip(normal_points, normal_vectors)):
             end_point = point + normal * scale
             ax.plot([point[0], end_point[0]], 
                    [point[1], end_point[1]], 
                    [point[2], end_point[2]], 
-                   color='red', linewidth=1.0)  # 增加法向量粗细
+                   color='yellow', linewidth=2.0)  # 黄色法向量，更容易区分
     
     # 添加坐标轴
     # 绘制坐标轴箭头
@@ -187,19 +206,19 @@ def visualize_point_cloud_with_matplotlib(points, normals=None, normal_num=100):
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    ax.set_title('Point Cloud Visualization')
+    ax.set_title('Point Cloud Visualization with Heatmap' if show_heatmap else 'Point Cloud Visualization')
     
     plt.show()
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='/home/lixinlong/Data/Diffusion_Suction_DataSet/train', help='数据集目录')
+    parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet/train', help='数据集目录')
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
-    parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
+    parser.add_argument('--scene_id', type=int, default=30, help='场景编号')
     parser.add_argument('--vision_normal_num', type=int, default=10, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='suction_score', choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable'], help='可视化分数类型')
+    parser.add_argument('--vision_score_type', type=str, default='suction_seal_score', choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
     
@@ -209,6 +228,25 @@ def main():
         print(f"文件 {h5_file_path} 不存在，请检查路径。")
         return
     point_cloud, normals, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable = read_h5_file(h5_file_path)
+    
+    # 剔除重复点
+    unique_points, unique_indices = np.unique(point_cloud, axis=0, return_index=True)
+    if len(unique_points) < point_cloud.shape[0]:
+        point_cloud = unique_points
+        normals = normals[unique_indices]
+        suction_seal_scores = suction_seal_scores[unique_indices]
+        suction_wrench_scores = suction_wrench_scores[unique_indices]
+        suction_feasibility_scores = suction_feasibility_scores[unique_indices]
+        individual_object_size_lable = individual_object_size_lable[unique_indices]
+        
+        if not point_cloud.flags['C_CONTIGUOUS']:
+            point_cloud = np.ascontiguousarray(point_cloud)
+            normals = np.ascontiguousarray(normals)
+            suction_seal_scores = np.ascontiguousarray(suction_seal_scores)
+            suction_wrench_scores = np.ascontiguousarray(suction_wrench_scores)
+            suction_feasibility_scores = np.ascontiguousarray(suction_feasibility_scores)
+            individual_object_size_lable = np.ascontiguousarray(individual_object_size_lable)
+    
     suction_score = suction_seal_scores * suction_wrench_scores * suction_feasibility_scores * individual_object_size_lable
     
     # 按照suction_score将点云排序
@@ -225,9 +263,14 @@ def main():
     else:
         print(f"可视化分数类型 {args.vision_score_type} 不支持。")
         return
+    # 应用排序到所有数据
     point_cloud = point_cloud[sorted_indices]
     normals = normals[sorted_indices] if normals is not None else None
     suction_score = suction_score[sorted_indices]
+    suction_seal_scores = suction_seal_scores[sorted_indices]
+    suction_wrench_scores = suction_wrench_scores[sorted_indices]
+    suction_feasibility_scores = suction_feasibility_scores[sorted_indices]
+    individual_object_size_lable = individual_object_size_lable[sorted_indices]
     
     # 取前args.vision_normal_num个向量
     vision_normals = normals[:args.vision_normal_num] if normals is not None else None
@@ -252,7 +295,7 @@ def main():
             plt.figure("Score Histogram", figsize=(10, 6))
             plt.hist(current_scores, bins=100, color='royalblue', alpha=0.7, edgecolor='black')
             plt.title(f"Histogram of {args.vision_score_type}")
-            plt.xlabel("Score Value")
+            plt.xlabel(f"Score Value of {args.vision_score_type}")
             plt.ylabel("Frequency")
             plt.grid(True, alpha=0.3)
             
@@ -281,10 +324,10 @@ def main():
         except Exception as e:
             print(f"Open3D可视化失败: {e}")
             print("尝试使用matplotlib可视化...")
-            visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num)
+            visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
     else:
         print("使用Matplotlib可视化点云...")
-        visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num)
+        visualize_point_cloud_with_matplotlib(point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
     
     # 保持直方图窗口打开
     if args.show_heatmap:

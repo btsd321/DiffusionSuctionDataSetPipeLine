@@ -318,32 +318,31 @@ def main():
     print(f"点云形状: {point_cloud.shape}")
     
     # 先显示直方图窗口
-    if args.show_heatmap:
-        try:
-            # 创建直方图
-            plt.figure("Score Histogram", figsize=(10, 6))
-            plt.hist(current_scores, bins=100, color='royalblue', alpha=0.7, edgecolor='black')
-            plt.title(f"Histogram of {args.vision_score_type}")
-            plt.xlabel(f"Score Value of {args.vision_score_type}")
-            plt.ylabel("Frequency")
-            plt.grid(True, alpha=0.3)
-            
-            # 添加统计信息
-            mean_score = np.mean(current_scores)
-            std_score = np.std(current_scores)
-            plt.axvline(mean_score, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_score:.4f}')
-            plt.legend()
-            
-            print(f"分数统计: 均值={mean_score:.4f}, 标准差={std_score:.4f}, 最小值={current_scores.min():.4f}, 最大值={current_scores.max():.4f}")
-            
-            # 保存图片并显示
-            # plt.savefig('score_histogram.png', dpi=150, bbox_inches='tight')
-            # print("直方图已保存为 score_histogram.png")
-            plt.show(block=False)
-            
-        except Exception as e:
-            print(f"直方图显示失败: {e}")
-            print("将继续显示点云...")
+    try:
+        # 创建直方图
+        plt.figure("Score Histogram", figsize=(10, 6))
+        plt.hist(current_scores, bins=100, color='royalblue', alpha=0.7, edgecolor='black')
+        plt.title(f"Histogram of {args.vision_score_type}")
+        plt.xlabel(f"Score Value of {args.vision_score_type}")
+        plt.ylabel("Frequency")
+        plt.grid(True, alpha=0.3)
+        
+        # 添加统计信息
+        mean_score = np.mean(current_scores)
+        std_score = np.std(current_scores)
+        plt.axvline(mean_score, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_score:.4f}')
+        plt.legend()
+        
+        print(f"分数统计: 均值={mean_score:.4f}, 标准差={std_score:.4f}, 最小值={current_scores.min():.4f}, 最大值={current_scores.max():.4f}")
+        
+        # 保存图片并显示
+        # plt.savefig('score_histogram.png', dpi=150, bbox_inches='tight')
+        # print("直方图已保存为 score_histogram.png")
+        plt.show(block=False)
+        
+    except Exception as e:
+        print(f"直方图显示失败: {e}")
+        print("将继续显示点云...")
     
     # 再显示点云窗口
     if args.method == 'o3d':

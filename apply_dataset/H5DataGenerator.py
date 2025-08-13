@@ -358,28 +358,48 @@ class H5DataGenerator(object):
         cylinder.vertex_colors = o3d.utility.Vector3dVector(ball_colors)
         
         return cylinder
-    
     def _cal_score_seal(self, suction_points, obj_ids, label_trans, label_rot, label_name):
         '''
         计算密封评分，密封评分用于确定在以特定姿势进行吸力抓取时吸盘是否能保持真空状态
         '''
-        # 坐标归一化到物体坐标系
-        suction_points_normalization = np.matmul((suction_points - label_trans).reshape(self.target_num_point,1,3), label_rot.reshape(-1,3,3) )
-        suction_points_normalization = suction_points_normalization.reshape(self.target_num_point, 3)
-        suction_seal_scores  = np.zeros((self.target_num_point, ))
+
+        actual_num_points = suction_points.shape[0]
+        
+        # 坐标归一化到物体坐标系 - 使用实际点数
+        suction_points_normalization = np.matmul(
+            (suction_points - label_trans).reshape(actual_num_points, 1, 3), 
+            label_rot.reshape(-1, 3, 3)
+        )
+        suction_points_normalization = suction_points_normalization.reshape(actual_num_points, 3)
+        
+        # 初始化评分数组 - 使用实际点数
+        suction_seal_scores = np.zeros((actual_num_points,))
+        
         # 计算吸取点的密封分数
         for index in range(len(label_name)):
             # 读取每个物体的稀疏点和分数
-            annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
-            object_sparse_point = annotation['points']
-            anno_points = annotation['points']
-            anno_scores = annotation['scores']
+            try:
+                annotation = np.load(os.path.join(self.objs_path, label_name[index], "labels.npz"))
+                object_sparse_point = annotation['points']
+                anno_points = annotation['points']
+                anno_scores = annotation['scores']
+            except FileNotFoundError:
+                print(f"警告: 找不到物体 {label_name[index]} 的标签文件")
+                continue
+            except KeyError as e:
+                print(f"警告: 物体 {label_name[index]} 的标签文件缺少键: {e}")
+                continue
 
             suction_points_normalization_id = suction_points_normalization[obj_ids == index]
             if suction_points_normalization_id.shape[0] == 0:
+                print(f"物体 {index} ({label_name[index]}) 没有对应的点")
                 continue
+                
+            print(f"处理物体 {index} ({label_name[index]}): {suction_points_normalization_id.shape[0]} 个点")
+            
             suction_points_normalization_id_knn = torch.from_numpy(suction_points_normalization_id).float()
             anno_points_knn = torch.from_numpy(anno_points).float()
+            
             # 优先用GPU，失败则自动切换CPU
             try:
                 suction_points_normalization_id_knn = suction_points_normalization_id_knn.cuda()
@@ -467,14 +487,28 @@ class H5DataGenerator(object):
         wrench_thre = k * radius * np.pi * np.sqrt(2)
         suction_wrench_scores = []
         for index_temp,suction_points_temp in enumerate(suction_points):
+            # index_temp：当前点云中点的索引
+            # suction_points_temp：当前点云中点的坐标
+            # 获取点所属物体的中心
             label_trans_temp = label_trans[index_temp]
+            # 获取点对应的法向量
             suction_or_temp = suction_or[index_temp]
+            # 重力作用点
             center = label_trans_temp
-            gravity = np.array([[0, 0, 1]], dtype=np.float32) * 9.8  # 重力方向
+            # 重力方向
+            gravity = np.array([[0, 0, -1]], dtype=np.float32) * 9.8  # 重力方向
+            # 获取点对应的法向量对应的旋转矩阵
             suction_axis = viewpoint_to_matrix_z(suction_or_temp)  # (3, 3)
+            # 计算力臂（从吸取点到物体中心的向量）
             suction2center = (center - suction_points_temp)[np.newaxis, :]
+            # 将力臂向量从世界坐标系转换到吸盘局部坐标系
             coord = np.matmul(suction2center, suction_axis)
+
+            # 将重力向量投影到吸盘局部坐标系
             gravity_proj = np.matmul(gravity, suction_axis)
+            # 计算吸盘坐标系下重力的扭矩
+            # 如果 G = [Gx, Gy, Gz]，F = [Fx, Fy, Fz]
+            # 那么 τ = F x G  = [Gy * Fz - Gz * Fy, Gz * Fx - Gx * Fz, Gx * Fy - Gy * Fx]
             torque_y = gravity_proj[0, 0] * coord[0, 2] - gravity_proj[0, 2] * coord[0, 0]
             torque_x = -gravity_proj[0, 1] * coord[0, 2] + gravity_proj[0, 2] * coord[0, 1]
             torque = np.sqrt(torque_x**2 + torque_y**2)
@@ -524,7 +558,7 @@ class H5DataGenerator(object):
         '''
         # 计算吸取点的可行性分数(碰撞检测)
         height = 0.15
-        radius = 0.03
+        radius = 0.06
         scence_point = suction_points
         suction_feasibility_scores = []
         for index_temp,suction_points_temp in enumerate(suction_points):

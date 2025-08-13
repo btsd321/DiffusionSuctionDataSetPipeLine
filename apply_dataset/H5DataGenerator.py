@@ -582,16 +582,15 @@ class H5DataGenerator(object):
         suction_visibility_scores = np.array([visibility_label[obj_ids[i]] for i in obj_ids])
         return suction_visibility_scores
     
-    def _cal_suction_score(self):
+    def _cal_flatness_score(self, points, normals, label_trans, suction_cup_radius=0.06):
         '''
-        计算吸取分数，公式：总分数=Seal * Wrench * Collision * Visibility(密封评分*抗扭矩评分*碰撞评分*可见性评分)
+        计算平面评分，平面评分用于评估所选点云中每个点假如作为吸取点，吸盘吸取平面的平整度
         '''
-        score_seal = self._cal_score_seal()
-        score_wrench = self._cal_score_wrench()
-        score_collision = self._cal_score_collision()
-        score_visibility = self._cal_score_visibility()
-        score = score_seal * score_wrench * score_collision * score_visibility
-        return score
+        # 计算kdtree
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        kdtree = o3d.geometry.KDTreeFlann(pcd)
+        
     
     def _filter_points(self, points):
         """

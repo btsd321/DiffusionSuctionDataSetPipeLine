@@ -797,7 +797,7 @@ class H5DataGenerator(object):
         normals = self._transform_normals(camera_normals)
         
         # # 第3步：剔除Z轴坐标大于0.7的点
-        # transformed_points, normals, filter_mask = self._filter_z_axis(transformed_points, normals, filter_mask)
+        transformed_points, normals, filter_mask = self._filter_z_axis(transformed_points, normals, filter_mask)
         
         return transformed_points, normals, filter_mask
     

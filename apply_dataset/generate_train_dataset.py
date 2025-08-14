@@ -26,6 +26,8 @@
 @checked: Huang Dingtao
 """
 import os
+import common_info
+import scene_loader
 # 设置CUDA可见设备为GPU 0，用于加速数据处理中的深度学习计算
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 # import torch
@@ -33,17 +35,13 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
-from camera_info import CameraInfo
 import argparse
 import re
-import OpenEXR
-import Imath
 import numpy as np
 import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 from datetime import datetime
-import cv2
     
 # 导入H5数据生成器模块，包含所有数据处理的核心功能
 from H5DataGenerator import *
@@ -105,18 +103,7 @@ OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含O
 GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
 INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
-# 用OpenEXR读取EXR分割图像
-def read_exr_to_numpy(filepath):
-    exr_file = OpenEXR.InputFile(filepath)
-    header = exr_file.header()
-    dw = header['dataWindow']
-    width = dw.max.x - dw.min.x + 1
-    height = dw.max.y - dw.min.y + 1
-    channels = ['R', 'G', 'B']
-    pt = Imath.PixelType(Imath.PixelType.FLOAT)
-    data = [np.frombuffer(exr_file.channel(c, pt), dtype=np.float32) for c in channels]
-    img = np.stack([d.reshape(height, width) for d in data], axis=-1)
-    return img
+
 
 # 线程安全的打印锁
 print_lock = threading.Lock()
@@ -142,14 +129,8 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
     try:
         thread_safe_print(f"开始处理循环 {cycle_id}，场景 {scene_id}")
         
-        # 为每个线程创建独立的H5数据生成器实例，避免线程冲突
-        g = H5DataGenerator(
-            params_file_name=data_generator_params['parameter_file'], 
-            camera_info_file_name=data_generator_params['camera_info_file'], 
-            objs_path=data_generator_params['objs_path'],
-            target_num_point=16384,
-            test_flag=False
-        )
+        common_information = data_generator_params['common_info']
+        
         
         # 1. 构建深度图像文件路径并加载
         depth_image_path = os.path.join(
@@ -158,9 +139,6 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
             "{:0>3}".format(scene_id), 
             'Image0001.png'
         )
-        depth_image = cv2.imread(depth_image_path, cv2.IMREAD_UNCHANGED)
-        if depth_image is None:
-            raise ValueError(f"无法读取深度图像文件: {depth_image_path}")
     
         # 2. 构建分割图像文件路径并加载
         seg_img_path = os.path.join(
@@ -169,7 +147,6 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
             "{:0>3}".format(scene_id), 
             'Image0001.exr'
         )
-        segment_image = read_exr_to_numpy(seg_img_path)
 
         # 3. 构建真值标签文件路径
         gt_file_path = os.path.join(
@@ -198,10 +175,15 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
         )
 
         # 6. 核心处理步骤：调用数据生成器处理当前场景
-        g.process_train_set(
-            depth_image, segment_image, gt_file_path, 
-            output_h5_path, individual_object_size_path
+        loader = scene_loader.SceneLoader(
+            depth_image_path = depth_image_path,
+            segment_image_path = seg_img_path,
+            gt_file_path = gt_file_path,
+            individual_object_size_path = individual_object_size_path,
+            common_info = common_information,
+            output_path = output_h5_path,
         )
+
         
         thread_safe_print(f"✅ 完成处理循环 {cycle_id}，场景 {scene_id}")
         gc.collect()  # 手动触发垃圾回收，防止内存泄漏
@@ -220,10 +202,14 @@ if __name__ == "__main__":
     CYCLE_idx_list = parse_range_or_single(FLAGS.cycle_list)
     SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
 
+    common_information = common_info.CommonInfo(
+            camera_info_file_path = FLAGS.parameter_file,
+            parameter_file_path = FLAGS.parameter_file
+        )
+
     # 准备数据生成器参数配置
     data_generator_params = {
-        'parameter_file': FLAGS.parameter_file,
-        'camera_info_file': FLAGS.camera_info_file,
+        'common_info': common_information,
         'objs_path': os.path.join(FLAGS.data_dir, 'OBJ'),
         'depth_dir': DEPTH_DIR,
         'segment_dir': SEGMENT_DIR,
@@ -231,6 +217,8 @@ if __name__ == "__main__":
         'train_set_dir': TRAIN_SET_DIR,
         'individual_path': INDIVIDUA_PATH
     }
+
+    
     
     # 生成所有循环-场景组合
     tasks = []

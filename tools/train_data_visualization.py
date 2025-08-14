@@ -25,7 +25,8 @@ def read_h5_file(file_path):
         suction_wrench_scores = f['suction_wrench_scores'][:]
         suction_feasibility_scores = f['suction_feasibility_scores'][:]
         individual_object_size_lable = f['individual_object_size_lable'][:]
-    return points, suction_or, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable
+        test_scores = f['test_scores'][:]
+    return points, suction_or, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable, test_scores
 
 def create_coordinate_frame(size=0.1):
     """
@@ -152,7 +153,7 @@ def visualize_point_cloud_with_o3d(args, points, normals=None, normal_num=100, s
             else:
                 print("无法提取点云数据进行matplotlib可视化")
 
-def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num=0, scores=None, show_heatmap=False):
+def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_idx = None, normal_num=0, scores=None, show_heatmap=False):
     """
     使用Matplotlib可视化点云
     """
@@ -175,8 +176,8 @@ def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num
     # 添加法向量
     if normals is not None:
         # 只显示前normal_num个法向量
-        normal_points = points[:normal_num]
-        normal_vectors = normals[:normal_num]
+        normal_points = points[normal_idx]
+        normal_vectors = normals
         
         # 绘制法向量（按一定比例缩放）
         scale = 0.1  # 法向量长度
@@ -242,10 +243,13 @@ def main():
     parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet/train', help='数据集目录')
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
-    parser.add_argument('--vision_normal_num', type=int, default=0, help='可视化向量个数')
+    parser.add_argument('--vision_normal_type', type=str, default='none', \
+        choices=['none', 'random', 'suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable', 'test_scores'], help='可视化向量排序类型')
+    parser.add_argument('--vision_normal_num', type=int, default=100, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='individual_object_size_lable', choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable'], help='可视化分数类型')
+    parser.add_argument('--vision_score_type', type=str, default='suction_feasibility_score', \
+        choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable', 'test_scores'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
     
@@ -254,17 +258,20 @@ def main():
     if not os.path.exists(h5_file_path):
         print(f"文件 {h5_file_path} 不存在，请检查路径。")
         return
-    point_cloud, normals, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable = read_h5_file(h5_file_path)
+    point_cloud, normals, suction_seal_scores, suction_wrench_scores, suction_feasibility_scores, individual_object_size_lable, test_scores = read_h5_file(h5_file_path)
     suction_feasibility_scores = suction_feasibility_scores.astype(np.float32)
     # 剔除重复点
     unique_points, unique_indices = np.unique(point_cloud, axis=0, return_index=True)
     if len(unique_points) < point_cloud.shape[0]:
+        print("重复点数：", point_cloud.shape[0] - len(unique_points))
+        print("剔除重复点后，点云形状:", unique_points.shape)
         point_cloud = unique_points
         normals = normals[unique_indices]
         suction_seal_scores = suction_seal_scores[unique_indices]
         suction_wrench_scores = suction_wrench_scores[unique_indices]
         suction_feasibility_scores = suction_feasibility_scores[unique_indices]
         individual_object_size_lable = individual_object_size_lable[unique_indices]
+        test_scores = test_scores[unique_indices]
         
         if not point_cloud.flags['C_CONTIGUOUS']:
             point_cloud = np.ascontiguousarray(point_cloud)
@@ -273,8 +280,9 @@ def main():
             suction_wrench_scores = np.ascontiguousarray(suction_wrench_scores)
             suction_feasibility_scores = np.ascontiguousarray(suction_feasibility_scores)
             individual_object_size_lable = np.ascontiguousarray(individual_object_size_lable)
-    
-    suction_score = suction_seal_scores * suction_wrench_scores * suction_feasibility_scores * individual_object_size_lable
+            test_scores = np.ascontiguousarray(test_scores)
+            
+    suction_score = suction_wrench_scores * suction_feasibility_scores * individual_object_size_lable
     
     # 按照suction_score将点云排序
     if args.vision_score_type =='suction_score':
@@ -287,6 +295,8 @@ def main():
         sorted_indices = np.argsort(suction_feasibility_scores)[::-1]
     elif args.vision_score_type == 'individual_object_size_lable':
         sorted_indices = np.argsort(individual_object_size_lable)[::-1]
+    elif args.vision_score_type == 'test_scores':
+        sorted_indices = np.argsort(test_scores)[::-1]
     else:
         print(f"可视化分数类型 {args.vision_score_type} 不支持。")
         return
@@ -298,11 +308,23 @@ def main():
     suction_wrench_scores = suction_wrench_scores[sorted_indices]
     suction_feasibility_scores = suction_feasibility_scores[sorted_indices]
     individual_object_size_lable = individual_object_size_lable[sorted_indices]
+    test_scores = test_scores[sorted_indices]
     
     # 取前args.vision_normal_num个向量
     vision_normals = None
+    normal_idx = None
     if args.vision_normal_num > 0:
-        vision_normals = normals[:args.vision_normal_num] if normals is not None else None
+        if args.vision_normal_type == 'none':
+            # 不显示法向量
+            pass
+        elif args.vision_normal_type == 'random':
+            # 随机选择法向量
+            normal_idx = np.random.choice(len(normals), args.vision_normal_num, replace=False)
+            vision_normals = normals[normal_idx]
+        else:
+            # 选择对应分数的前args.vision_normal_num个向量 
+            normal_idx = np.arange(0, args.vision_normal_num)
+            vision_normals = normals[normal_idx] if normals is not None else None
     
     # 获取当前可视化分数类型对应的分数
     score_map = {
@@ -310,7 +332,8 @@ def main():
         'suction_seal_score': suction_seal_scores,
         'suction_wrench_score': suction_wrench_scores,
         'suction_feasibility_score': suction_feasibility_scores,
-        'individual_object_size_lable': individual_object_size_lable
+        'individual_object_size_lable': individual_object_size_lable,
+        'test_scores': test_scores
     }
     current_scores = score_map.get(args.vision_score_type, suction_score)
     
@@ -352,10 +375,10 @@ def main():
         except Exception as e:
             print(f"Open3D可视化失败: {e}")
             print("尝试使用matplotlib可视化...")
-            visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+            visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, normal_idx, args.vision_normal_num, current_scores, args.show_heatmap)
     else:
         print("使用Matplotlib可视化点云...")
-        visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+        visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, normal_idx, args.vision_normal_num, current_scores, args.show_heatmap)
     
     # 保持直方图窗口打开
     if args.show_heatmap:

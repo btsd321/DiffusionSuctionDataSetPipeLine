@@ -251,7 +251,7 @@ class H5DataGenerator(object):
         Ycs = np.reshape(Ycs, (-1, 1))
         Zcs = np.reshape(Zcs, (-1, 1))
         # blender中相机朝向为Z轴的负方向，因此在相机坐标系中的坐标应该取反
-        points = np.concatenate([-Xcs, -Ycs, -Zcs], axis=-1)
+        points = np.concatenate([Xcs, -Ycs, -Zcs], axis=-1)
                     
         return points
 
@@ -558,7 +558,7 @@ class H5DataGenerator(object):
         '''
         # 计算吸取点的可行性分数(碰撞检测)
         height = 0.15
-        radius = 0.06
+        radius = 0.02
         scence_point = suction_points
         suction_feasibility_scores = []
         for index_temp,suction_points_temp in enumerate(suction_points):
@@ -581,16 +581,6 @@ class H5DataGenerator(object):
         '''
         suction_visibility_scores = np.array([visibility_label[obj_ids[i]] for i in obj_ids])
         return suction_visibility_scores
-    
-    def _cal_flatness_score(self, points, normals, label_trans, suction_cup_radius=0.06):
-        '''
-        计算平面评分，平面评分用于评估所选点云中每个点假如作为吸取点，吸盘吸取平面的平整度
-        '''
-        # 计算kdtree
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        kdtree = o3d.geometry.KDTreeFlann(pcd)
-        
     
     def _filter_points(self, points):
         """
@@ -635,11 +625,11 @@ class H5DataGenerator(object):
                     fast_normal_computation=False
                 )
                 
-                # 计算相机坐标系下地球方向并统一法向量
-                world_down = np.array([0., 0., -1.])
-                w2c_rotation = self.cam_info.extrinsic_matrix[:3, :3]
-                cam_down = np.matmul(w2c_rotation, world_down)
-                pc_o3d.orient_normals_to_align_with_direction(cam_down)
+                # # 计算相机坐标系下地球方向并统一法向量
+                # world_down = np.array([0., 0., -1.])
+                # w2c_rotation = self.cam_info.extrinsic_matrix[:3, :3]
+                # cam_down = np.matmul(w2c_rotation, world_down)
+                # pc_o3d.orient_normals_to_align_with_direction(cam_down)
                 pc_o3d.normalize_normals()
                 
                 suction_or = np.array(pc_o3d.normals).astype(np.float32)
@@ -808,7 +798,7 @@ class H5DataGenerator(object):
         else:
             plt.show()
         
-    def _normalize_pointcloud(self, points):
+    def _normalize_pointcloud(self, points, obj_ids, translations):
         """
         点云标准化处理流程
         
@@ -828,12 +818,218 @@ class H5DataGenerator(object):
         # 第2步：坐标转换到世界坐标系
         transformed_points = self._transform_points(filtered_points)
         normals = self._transform_normals(camera_normals)
-        
+        filter_obj_ids = obj_ids[filter_mask]
+        # 向量全部指向各个物体中心,mask记录滤波后的法向量中有哪些被翻转了
+        fliped_normals, mask = self._normalize_normals(transformed_points, normals, filter_obj_ids, translations)
         # # 第3步：剔除Z轴坐标大于0.7的点
         transformed_points, normals, filter_mask = self._filter_z_axis(transformed_points, normals, filter_mask)
         
-        return transformed_points, normals, filter_mask
+        return transformed_points, normals, fliped_normals, filter_mask, mask
     
+    def _process_obj_normals(self, points, normals, obj_center):
+        # 计算从点指向中心的向量（真正的"点到中心"向量）
+        points_to_center = obj_center - points  # 形状为(N, 3)
+        
+        # 计算法向量与指向中心向量的点积
+        dot_products = np.sum(normals * points_to_center, axis=1)  # 形状 (N,)
+
+        # 找到反向的点（点积小于0，即法向量背离中心）
+        opposite_direction_mask = dot_products < 0  # 形状 (N,)
+
+        # 对背离中心的法向量取反，使其指向中心
+        normals[opposite_direction_mask] *= -1
+        # self._visualize_normals_and_center(points, normals, obj_center)
+        return normals, opposite_direction_mask
+    
+    def _visualize_normals_and_center(self, points, normals, obj_center, max_normals=50):
+        """
+        可视化点云、法向量和物体中心点
+        
+        参数:
+            points (numpy.ndarray): 点云数据，形状为(N, 3)
+            normals (numpy.ndarray): 法向量数据，形状为(N, 3)
+            obj_center (numpy.ndarray): 物体中心点，形状为(3,)
+            max_normals (int): 最大显示的法向量数量，避免过于密集
+        """
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        import threading
+        
+        # 检查是否在主线程和有显示环境
+        is_main_thread = threading.current_thread() is threading.main_thread()
+        has_display = 'DISPLAY' in os.environ or 'WAYLAND_DISPLAY' in os.environ
+        
+        if not is_main_thread or not has_display:
+            matplotlib.use('Agg')
+            print("检测到非主线程或无显示环境，保存可视化图片")
+        
+        fig = plt.figure(figsize=(14, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # 1. 绘制点云
+        ax.scatter(points[:, 0], points[:, 1], points[:, 2], 
+                c='lightblue', s=8, alpha=0.7, label='Point Cloud')
+        
+        # 2. 绘制物体中心点
+        ax.scatter(obj_center[0], obj_center[1], obj_center[2], 
+                c='red', s=200, marker='*', 
+                label='Object Center', edgecolors='darkred', linewidth=2)
+        
+        # 3. 绘制法向量（选择性显示，避免过于密集）
+        num_points = len(points)
+        if num_points > max_normals:
+            # 均匀采样法向量索引
+            step = num_points // max_normals
+            indices = np.arange(0, num_points, step)[:max_normals]
+        else:
+            indices = np.arange(num_points)
+        
+        # 计算法向量的缩放长度（基于点云尺度）
+        points_range = np.max(points, axis=0) - np.min(points, axis=0)
+        normal_length = np.mean(points_range) * 0.05  # 法向量长度为点云尺度的5%
+        
+        # 绘制选中的法向量
+        for i in indices:
+            point = points[i]
+            normal = normals[i] * normal_length
+            
+            # 绘制法向量箭头
+            ax.quiver(point[0], point[1], point[2],
+                    normal[0], normal[1], normal[2],
+                    color='yellow', alpha=0.8, arrow_length_ratio=0.1)
+        
+        # 4. 绘制从点到中心的连线（选择几个代表性的点）
+        representative_indices = indices[::max(1, len(indices)//10)]  # 选择最多10条连线
+        for i in representative_indices:
+            point = points[i]
+            ax.plot([point[0], obj_center[0]], 
+                    [point[1], obj_center[1]], 
+                    [point[2], obj_center[2]], 
+                    'g--', alpha=0.5, linewidth=1)
+        
+        # 5. 设置坐标轴等比例和标签
+        # 计算显示范围
+        all_points = np.vstack([points, obj_center.reshape(1, -1)])
+        max_range = np.array([all_points[:, 0].max() - all_points[:, 0].min(),
+                            all_points[:, 1].max() - all_points[:, 1].min(),
+                            all_points[:, 2].max() - all_points[:, 2].min()]).max() / 2.0
+        
+        mid_x = (all_points[:, 0].max() + all_points[:, 0].min()) * 0.5
+        mid_y = (all_points[:, 1].max() + all_points[:, 1].min()) * 0.5
+        mid_z = (all_points[:, 2].max() + all_points[:, 2].min()) * 0.5
+        
+        # 设置等比例显示
+        expansion_factor = 1.2  # 稍微扩大显示范围
+        ax.set_xlim(mid_x - max_range * expansion_factor, mid_x + max_range * expansion_factor)
+        ax.set_ylim(mid_y - max_range * expansion_factor, mid_y + max_range * expansion_factor)
+        ax.set_zlim(mid_z - max_range * expansion_factor, mid_z + max_range * expansion_factor)
+        
+        # 6. 添加坐标轴
+        axis_length = max_range * 0.3
+        ax.quiver(mid_x, mid_y, mid_z, axis_length, 0, 0, 
+                color='red', arrow_length_ratio=0.1, linewidth=3, alpha=0.8)
+        ax.quiver(mid_x, mid_y, mid_z, 0, axis_length, 0, 
+                color='green', arrow_length_ratio=0.1, linewidth=3, alpha=0.8)
+        ax.quiver(mid_x, mid_y, mid_z, 0, 0, axis_length, 
+                color='blue', arrow_length_ratio=0.1, linewidth=3, alpha=0.8)
+        
+        # 添加坐标轴标签
+        ax.text(mid_x + axis_length * 1.1, mid_y, mid_z, 'X', 
+                color='red', fontsize=12, fontweight='bold')
+        ax.text(mid_x, mid_y + axis_length * 1.1, mid_z, 'Y', 
+                color='green', fontsize=12, fontweight='bold')
+        ax.text(mid_x, mid_y, mid_z + axis_length * 1.1, 'Z', 
+                color='blue', fontsize=12, fontweight='bold')
+        
+        # 7. 设置标题和标签
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_zlabel('Z (m)')
+        ax.set_title(f'Object Normal Vectors Alignment\n'
+                    f'Points: {len(points)}, Normals shown: {len(indices)}')
+        
+        # 8. 添加图例
+        ax.legend(loc='upper left', bbox_to_anchor=(0, 1))
+        
+        # 9. 添加统计信息文本
+        # 验证法向量指向中心的比例
+        points_to_center = obj_center - points
+        dot_products = np.sum(normals * points_to_center, axis=1)
+        pointing_to_center = np.sum(dot_products > 0)
+        pointing_percentage = pointing_to_center / len(points) * 100
+        
+        info_text = f"Statistics:\n" \
+                    f"Total points: {len(points)}\n" \
+                    f"Pointing to center: {pointing_to_center}/{len(points)}\n" \
+                    f"Alignment rate: {pointing_percentage:.1f}%"
+        
+        ax.text2D(0.02, 0.98, info_text, transform=ax.transAxes, 
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # 10. 保存或显示
+        plt.tight_layout()
+        
+        if not is_main_thread or not has_display:
+            output_path = 'normals_alignment_visualization.png'
+            plt.savefig(output_path, dpi=200, bbox_inches='tight', 
+                    facecolor='white', edgecolor='none')
+            print(f"法向量对齐可视化已保存到: {output_path}")
+            plt.close(fig)
+        else:
+            plt.show()
+        
+        # 11. 输出详细统计信息
+        print(f"\n=== 法向量对齐统计 ===")
+        print(f"物体中心坐标: [{obj_center[0]:.3f}, {obj_center[1]:.3f}, {obj_center[2]:.3f}]")
+        print(f"点云数量: {len(points)}")
+        print(f"指向中心的法向量: {pointing_to_center}/{len(points)} ({pointing_percentage:.1f}%)")
+        print(f"背离中心的法向量: {len(points) - pointing_to_center}/{len(points)} ({100 - pointing_percentage:.1f}%)")
+        
+        # 计算平均角度
+        norm_normals = np.linalg.norm(normals, axis=1)
+        norm_to_center = np.linalg.norm(points_to_center, axis=1)
+        cos_angles = dot_products / (norm_normals * norm_to_center + 1e-8)
+        cos_angles = np.clip(cos_angles, -1.0, 1.0)
+        angles_deg = np.degrees(np.arccos(np.abs(cos_angles)))
+        
+        print(f"平均偏离角度: {np.mean(angles_deg):.2f}°")
+        print(f"最大偏离角度: {np.max(angles_deg):.2f}°")
+        print(f"最小偏离角度: {np.min(angles_deg):.2f}°")
+        print("=" * 30)
+    def _normalize_normals(self, points, normals, obj_ids, translations):
+        # 获取唯一的物体ID
+        print(f"points.shape: {points.shape}")
+        print(f"normals.shape: {normals.shape}")
+        print(f"obj_ids.shape: {obj_ids.shape}")
+        print(f"translations.shape: {translations.shape}")
+        unique_ids = np.unique(obj_ids)
+        
+        # 存储分离后的点云
+        separated_clouds = {}
+        # 存储计算后的向量
+        normals_normalized = np.zeros_like(normals, dtype=np.float32)
+        all_mask = np.zeros(points.shape[0], dtype=bool)
+        for obj_id in unique_ids:
+            # 创建布尔掩码，选择属于当前物体的点
+            mask = (obj_ids == obj_id)
+            # 计算indices
+            
+            # 提取对应的数据
+            obj_data = {
+                'points': points[mask],
+                'normals': normals[mask],
+                'obj_id': obj_id,# 场景中物体索引非物体ID
+                'num_points': np.sum(mask),
+                'translation': translations[obj_id, :],  # 获取物体的平移向量
+            }
+            
+            separated_clouds[int(obj_id)] = obj_data
+            single_points = obj_data['points']
+            single_normals = obj_data['normals']
+            center = obj_data['translation']
+            print(f"处理当前场景中第 {obj_id} 个物体，点数: {single_points.shape[0]}, 中心: {center}")
+            normals_normalized[mask], all_mask[mask] = self._process_obj_normals(single_points, single_normals, center)
+        return normals_normalized, all_mask
     def _visualize_pointcloud_with_ids(self, points, obj_ids, point_size=1):
         """
         使用matplotlib可视化点云, 根据点所属物体ID进行上色
@@ -844,12 +1040,7 @@ class H5DataGenerator(object):
             obj_ids (numpy.ndarray): 对应的物体ID，形状为(N,)
             point_size (float): 点的大小，默认为1
         """
-        import matplotlib
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import threading
-        import os
-        from matplotlib.colors import ListedColormap
+        # from matplotlib.colors import ListedColormap
 
         # 检查是否在主线程和有显示环境
         is_main_thread = threading.current_thread() is threading.main_thread()
@@ -1074,18 +1265,6 @@ class H5DataGenerator(object):
         # 执行3D重建：像素坐标 + 深度 → 3D点云
         points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
         
-        # 测试Debug
-        # 计算suction_points的范围
-        # 保存点云
-        # self._visualize_pointcloud(points)
-        
-        origin_points_max = np.max(points, axis=0)  # 形状: (3,)
-        origin_points_min = np.min(points, axis=0)  # 形状: (3,)
-        
-        print(f"origin_points_max各轴最大值: X={origin_points_max[0]:.4f}, Y={origin_points_max[1]:.4f}, Z={origin_points_max[2]:.4f}")
-        print(f"origin_points_max各轴最小值: X={origin_points_min[0]:.4f}, Y={origin_points_min[1]:.4f}, Z={origin_points_min[2]:.4f}")
-        # 测试Debug
-        
         # === 第3步：分割信息提取 ===
         # 从分割图像中提取每个点对应的物体ID
         # segment_img[:,:,2] == 1 表示前景点，segment_img[:,:,1] 包含归一化的物体ID
@@ -1093,31 +1272,18 @@ class H5DataGenerator(object):
         # obj_ids 点所在物体在场景中的ID
         obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
         obj_ids = obj_ids.astype('int')  # 转换为整数类型
-        
-        # 测试Debug
-        # 测试点云和物体ID的对应关系
-        #self._visualize_pointcloud_with_ids(points, obj_ids)
-        # 测试Debug
-        
-        print(f"点云中第一个点: {points[0]}，对应的物体id: {obj_ids[0]}")
-        print(f"点云中最后一个点: {points[-1]}，对应的物体id: {obj_ids[-1]}")
-        print(f'点云数据points形状：{points.shape}')
-        print(f'物体id数据obj_ids形状：{obj_ids.shape}')
+
         # === 第4步：点云采样和标准化 ===
         num_pnt = points.shape[0]
         if num_pnt == 0:
             raise ValueError('没有前景点，跳过当前场景！')
+
+        # normal_flip_mask代表滤波后的点云中有哪些点的法向量被翻转了，长度和滤波后的点云相同
+        normalized_points, origin_world_normals, world_normals, filter_mask, normal_flip_mask= self._normalize_pointcloud(points, obj_ids, label_trans)
         
-        # 点云标准化（包含统计滤波和坐标变换）， normalized_points形状为(N, 3)
-        # if not points.flags['C_CONTIGUOUS']:
-        #     points = np.ascontiguousarray(points)
-        #     obj_ids = np.ascontiguousarray(obj_ids)
-            
-        normalized_points, world_normals, filter_mask = self._normalize_pointcloud(points)
         # 根据滤波掩码更新物体ID数组 移除obj_ids中filter_mask不为True的点
 
         obj_ids = obj_ids[filter_mask]
-        print(f'label_trans形状为: {label_trans.shape}')
 
         # 测试Debug
         # 计算suction_points的范围
@@ -1126,27 +1292,11 @@ class H5DataGenerator(object):
         
         print(f"normalized_points各轴最大值: X={points_max[0]:.4f}, Y={points_max[1]:.4f}, Z={points_max[2]:.4f}")
         print(f"normalized_points各轴最小值: X={points_min[0]:.4f}, Y={points_min[1]:.4f}, Z={points_min[2]:.4f}")
-        # 在第4步之后，第902行之前添加验证
-        print(f"数据一致性验证:")
-        print(f"  原始points: {points.shape[0]}")
-        print(f"  过滤后normalized_points: {normalized_points.shape[0]}")
-        print(f"  原始obj_ids: {obj_ids.shape[0]} (应该等于原始points)")
-        print(f"  filter_mask: {filter_mask.shape[0]} (应该等于原始points)")
-        print(f"  filter_mask中True的数量: {np.sum(filter_mask)} (应该等于过滤后points)")
-        # 验证掩码正确性
-
-        assert np.sum(filter_mask) == normalized_points.shape[0], \
-            f"掩码True数量不匹配: mask中True={np.sum(filter_mask)}, 过滤后点数={normalized_points.shape[0]}"
-        # 测试Debug
 
         # 更新点数
         num_pnt = normalized_points.shape[0]
         if num_pnt == 0:
             raise ValueError('滤波后没有剩余点，跳过当前场景！')
-        
-        # 添加调试信息
-        print(f"滤波后点云数量: {num_pnt}, 目标点数: {self.target_num_point}")
-        print(f"obj_ids shape: {obj_ids.shape}, world_normals shape: {world_normals.shape}")
             
         # 确保数组内存连续
         if not normalized_points.flags['C_CONTIGUOUS']:
@@ -1159,10 +1309,7 @@ class H5DataGenerator(object):
         individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
         if individual_object_size_lable.size == 0:
             raise ValueError('尺寸标签文件为空！')
-        
-        # 添加调试信息
-        print(f"individual_object_size_lable: {individual_object_size_lable}, type: {type(individual_object_size_lable)}")
-        
+     
         # 情况1：点数过多，使用最远点采样(FPS)进行下采样
         if num_pnt > self.target_num_point:
             print(f"点数过多({num_pnt} > {self.target_num_point})，进行FPS降采样")
@@ -1178,7 +1325,8 @@ class H5DataGenerator(object):
             normalized_points = normalized_points[sampled_idx]
             obj_ids = obj_ids[sampled_idx]
             world_normals = world_normals[sampled_idx]
-            
+            origin_world_normals = origin_world_normals[sampled_idx]
+            normal_flip_mask = normal_flip_mask[sampled_idx]
             # 标签数据对齐
             try:
                 points_label_trans = np.array([label_trans[obj_ids[i]] for i in range(len(obj_ids))])
@@ -1198,7 +1346,7 @@ class H5DataGenerator(object):
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
             score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-            
+            suction_or = origin_world_normals.astype(np.float32)  # 原始法向量（未翻转）
         # 情况2：点数不足，先计算分数再进行重复采样
         elif num_pnt < self.target_num_point:
             print(f"点数不足({num_pnt} < {self.target_num_point})，先计算分数再重采样")
@@ -1218,7 +1366,6 @@ class H5DataGenerator(object):
             score_wrench_original = self._cal_score_wrench(normalized_points, world_normals, points_label_trans, camera_info=self.cam_info)
             score_collision_original = self._cal_score_collision(normalized_points, world_normals)
             score_visibility_original = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-            
             # 计算重复次数
             t = int(1.0 * self.target_num_point / num_pnt) + 1
             
@@ -1228,6 +1375,12 @@ class H5DataGenerator(object):
             
             world_normals_tile = np.tile(world_normals, [t, 1])
             world_normals = world_normals_tile[:self.target_num_point]
+            
+            origin_world_normals_tile = np.tile(origin_world_normals, [t, 1])
+            origin_world_normals = origin_world_normals_tile[:self.target_num_point]
+            
+            normal_flip_mask_tile = np.tile(normal_flip_mask, [t])
+            normal_flip_mask = normal_flip_mask_tile[:self.target_num_point]
             
             obj_ids_tile = np.tile(obj_ids, [t])
             obj_ids = obj_ids_tile[:self.target_num_point]
@@ -1254,10 +1407,10 @@ class H5DataGenerator(object):
             
             score_visibility_tile = np.tile(score_visibility_original, [t])
             score_visibility = score_visibility_tile[:self.target_num_point]
-            
+
             # 提取处理后的数据
             suction_points = normalized_points
-            suction_or = world_normals.astype(np.float32)
+            suction_or = origin_world_normals.astype(np.float32)
             
         else:
             # 情况3：点数正好等于目标数量，无需采样
@@ -1282,73 +1435,16 @@ class H5DataGenerator(object):
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
             score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-        
-        # 采样后的调试信息
-        print(f"最终结果: suction_points {suction_points.shape}, obj_ids {obj_ids.shape}, suction_or {suction_or.shape}")
-        
-        # 确保所有数组长度一致
-        assert suction_points.shape[0] == obj_ids.shape[0] == suction_or.shape[0], \
-            f"数组长度不一致: points {suction_points.shape[0]}, obj_ids {obj_ids.shape[0]}, normals {suction_or.shape[0]}"
-
-        # 调试信息：检查所有评分数组的形状
-        print(f"评分数组形状检查:")
-        print(f"  score_seal: {score_seal.shape}")
-        print(f"  score_wrench: {score_wrench.shape}")
-        print(f"  score_collision: {score_collision.shape}")
-        print(f"  score_visibility: {score_visibility.shape}")
-
-        # # 综合所有分数, 得到最终分数并排序
-        # score_all = score_seal * score_wrench * score_collision * score_visibility
-
-        # # 对 score_all（所有吸取点的综合评分）从大到小排序，得到排序后的索引数组 sorted_indices。
-        # sorted_indices = np.argsort(score_all)[::-1]
-        # score_all_asort = score_all[sorted_indices]
-        # # 注意：这里应该使用 suction_points 而不是 points，因为 points 是原始点云，可能长度不同
-        # suction_points_asort = suction_points[sorted_indices]
-        # suction_or_asort = suction_or[sorted_indices]
-        # 打印最高分及该分数对应的点
-        # print("最高分：", score_all_asort[0], "  对应点：", points_asort[0])
-
-        # # 可视化最终排序后的吸取点
-        # show_point_temp=o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points_asort))
-        # colors_temp = [[0, 0, 1]  for i in range(points.shape[0])]
-        # show_point_temp.colors = o3d.utility.Vector3dVector(colors_temp)
-        # vis_list = [  show_point_temp   ]
-        # for idx in range(len(suction_points_asort[0:600])):
-        #     suction_point = suction_points_asort[idx]
-        #     anno_normal = suction_or_asort[idx]
-        #     suction_score = score_all_asort[idx]
-        #     n = anno_normal
-        #     new_z = n
-        #     new_y = np.array((new_z[1], -new_z[0], 0), dtype=np.float64)
-        #     new_y = new_y / np.linalg.norm(new_y)
-        #     new_x = np.cross(new_y, new_z)
-        #     new_x = new_x / np.linalg.norm(new_x)
-        #     new_x = np.expand_dims(new_x, axis=1)
-        #     new_y = np.expand_dims(new_y, axis=1)
-        #     new_z = np.expand_dims(new_z, axis=1)
-        #     rot_matrix = np.concatenate((new_x, new_y, new_z), axis=-1)
-        #     ball = self.create_mesh_cylinder(radius=0.005, height=0.05, R=rot_matrix, t=suction_point, collision=suction_score)
-        #     vis_list.append(ball)
-        # o3d.visualization.draw_geometries(vis_list, width=800,   height=600)
-        # 绘制最终分数直方图
-        # import matplotlib.pyplot as plt
-        # plt.hist(score_all, bins=100)
-        # plt.title("Histogram of Final Score")
-        # plt.xlabel("Value")
-        # plt.ylabel("Frequency")
-        # plt.show()
-        if self.test_flag:
-            
-            obj_score_list = []
-            
+            suction_or = origin_world_normals.astype(np.float32)
         # ------------------------------------------------------------------------------------step 5: save as h5 file
         # 保存所有点云、法线、分数等为h5格式
         # self._visualize_pointcloud(suction_points)
+        normal_flip_mask.astype(np.float32)
         with h5py.File(output_file_path,'w') as f:
             f['points'] = suction_points  # 使用处理后的点云
-            f['suction_or'] = suction_or
-            f['suction_seal_scores'] = score_seal
+            f['suction_or'] = suction_or  # 输入翻转前的法向量
+            f['normal_flip_mask'] = normal_flip_mask  # 法向量翻转掩码, 需要训练
+            f['suction_seal_scores'] = score_seal 
             f['suction_wrench_scores'] = score_wrench
             f['suction_feasibility_scores'] = score_collision
             f['individual_object_size_lable'] = score_visibility

@@ -152,7 +152,7 @@ def visualize_point_cloud_with_o3d(args, points, normals=None, normal_num=100, s
             else:
                 print("无法提取点云数据进行matplotlib可视化")
 
-def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num=0, scores=None, show_heatmap=False):
+def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_idx = None, normal_num=0, scores=None, show_heatmap=False):
     """
     使用Matplotlib可视化点云
     """
@@ -175,8 +175,8 @@ def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_num
     # 添加法向量
     if normals is not None:
         # 只显示前normal_num个法向量
-        normal_points = points[:normal_num]
-        normal_vectors = normals[:normal_num]
+        normal_points = points[normal_idx]
+        normal_vectors = normals
         
         # 绘制法向量（按一定比例缩放）
         scale = 0.1  # 法向量长度
@@ -242,10 +242,13 @@ def main():
     parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet/train', help='数据集目录')
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
-    parser.add_argument('--vision_normal_num', type=int, default=0, help='可视化向量个数')
+    parser.add_argument('--vision_normal_type', type=str, default='none', \
+        choices=['none', 'random', 'suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable', 'test_scores'], help='可视化向量排序类型')
+    parser.add_argument('--vision_normal_num', type=int, default=100, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='individual_object_size_lable', choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable'], help='可视化分数类型')
+    parser.add_argument('--vision_score_type', type=str, default='suction_feasibility_score', \
+        choices=['suction_score','suction_seal_score','suction_wrench_score','suction_feasibility_score', 'individual_object_size_lable', 'test_scores'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
     
@@ -259,6 +262,8 @@ def main():
     # 剔除重复点
     unique_points, unique_indices = np.unique(point_cloud, axis=0, return_index=True)
     if len(unique_points) < point_cloud.shape[0]:
+        print("重复点数：", point_cloud.shape[0] - len(unique_points))
+        print("剔除重复点后，点云形状:", unique_points.shape)
         point_cloud = unique_points
         normals = normals[unique_indices]
         suction_seal_scores = suction_seal_scores[unique_indices]
@@ -274,7 +279,7 @@ def main():
             suction_feasibility_scores = np.ascontiguousarray(suction_feasibility_scores)
             individual_object_size_lable = np.ascontiguousarray(individual_object_size_lable)
     
-    suction_score = suction_seal_scores * suction_wrench_scores * suction_feasibility_scores * individual_object_size_lable
+    suction_score = suction_wrench_scores * suction_feasibility_scores * individual_object_size_lable
     
     # 按照suction_score将点云排序
     if args.vision_score_type =='suction_score':
@@ -301,8 +306,19 @@ def main():
     
     # 取前args.vision_normal_num个向量
     vision_normals = None
+    normal_idx = None
     if args.vision_normal_num > 0:
-        vision_normals = normals[:args.vision_normal_num] if normals is not None else None
+        if args.vision_normal_type == 'none':
+            # 不显示法向量
+            pass
+        elif args.vision_normal_type == 'random':
+            # 随机选择法向量
+            normal_idx = np.random.choice(len(normals), args.vision_normal_num, replace=False)
+            vision_normals = normals[normal_idx]
+        else:
+            # 选择对应分数的前args.vision_normal_num个向量 
+            normal_idx = np.arange(0, args.vision_normal_num)
+            vision_normals = normals[normal_idx] if normals is not None else None
     
     # 获取当前可视化分数类型对应的分数
     score_map = {
@@ -318,32 +334,31 @@ def main():
     print(f"点云形状: {point_cloud.shape}")
     
     # 先显示直方图窗口
-    if args.show_heatmap:
-        try:
-            # 创建直方图
-            plt.figure("Score Histogram", figsize=(10, 6))
-            plt.hist(current_scores, bins=100, color='royalblue', alpha=0.7, edgecolor='black')
-            plt.title(f"Histogram of {args.vision_score_type}")
-            plt.xlabel(f"Score Value of {args.vision_score_type}")
-            plt.ylabel("Frequency")
-            plt.grid(True, alpha=0.3)
-            
-            # 添加统计信息
-            mean_score = np.mean(current_scores)
-            std_score = np.std(current_scores)
-            plt.axvline(mean_score, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_score:.4f}')
-            plt.legend()
-            
-            print(f"分数统计: 均值={mean_score:.4f}, 标准差={std_score:.4f}, 最小值={current_scores.min():.4f}, 最大值={current_scores.max():.4f}")
-            
-            # 保存图片并显示
-            # plt.savefig('score_histogram.png', dpi=150, bbox_inches='tight')
-            # print("直方图已保存为 score_histogram.png")
-            plt.show(block=False)
-            
-        except Exception as e:
-            print(f"直方图显示失败: {e}")
-            print("将继续显示点云...")
+    try:
+        # 创建直方图
+        plt.figure("Score Histogram", figsize=(10, 6))
+        plt.hist(current_scores, bins=100, color='royalblue', alpha=0.7, edgecolor='black')
+        plt.title(f"Histogram of {args.vision_score_type}")
+        plt.xlabel(f"Score Value of {args.vision_score_type}")
+        plt.ylabel("Frequency")
+        plt.grid(True, alpha=0.3)
+        
+        # 添加统计信息
+        mean_score = np.mean(current_scores)
+        std_score = np.std(current_scores)
+        plt.axvline(mean_score, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_score:.4f}')
+        plt.legend()
+        
+        print(f"分数统计: 均值={mean_score:.4f}, 标准差={std_score:.4f}, 最小值={current_scores.min():.4f}, 最大值={current_scores.max():.4f}")
+        
+        # 保存图片并显示
+        # plt.savefig('score_histogram.png', dpi=150, bbox_inches='tight')
+        # print("直方图已保存为 score_histogram.png")
+        plt.show(block=False)
+        
+    except Exception as e:
+        print(f"直方图显示失败: {e}")
+        print("将继续显示点云...")
     
     # 再显示点云窗口
     if args.method == 'o3d':
@@ -353,10 +368,10 @@ def main():
         except Exception as e:
             print(f"Open3D可视化失败: {e}")
             print("尝试使用matplotlib可视化...")
-            visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+            visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, normal_idx, args.vision_normal_num, current_scores, args.show_heatmap)
     else:
         print("使用Matplotlib可视化点云...")
-        visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, args.vision_normal_num, current_scores, args.show_heatmap)
+        visualize_point_cloud_with_matplotlib(args, point_cloud, vision_normals, normal_idx, args.vision_normal_num, current_scores, args.show_heatmap)
     
     # 保持直方图窗口打开
     if args.show_heatmap:

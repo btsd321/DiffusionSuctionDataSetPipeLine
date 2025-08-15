@@ -259,10 +259,10 @@ class LabelSolver:
                 # 将重力向量从世界坐标系转换到吸盘局部坐标系
                 gravity_local = np.einsum('nij,j->ni', obj_normals_rotation_matrix, gravity[0])  # shape: (N', 3)
                 # 计算吸盘坐标系下重力的扭矩
-                torque_y = gravity_local[0, 0] * gravity_arm_local[0, 2] - gravity_local[0, 2] * gravity_arm_local[0, 0]
-                torque_x = -gravity_local[0, 1] * gravity_arm_local[0, 2] + gravity_local[0, 2] * gravity_arm_local[0, 1]
+                torque_x = gravity_arm_local[:, 1] * gravity_local[:, 2] - gravity_arm_local[:, 2] * gravity_local[:, 1]
+                torque_y = gravity_arm_local[:, 2] * gravity_local[:, 0] - gravity_arm_local[:, 0] * gravity_local[:, 2]
                 torque = np.sqrt(torque_x**2 + torque_y**2)
-                scores[obj_mask_in_scene] = 1 - min(1, torque / wrench_thre)
+                scores[obj_mask_in_scene] = 1 - np.minimum(1.0, torque / wrench_thre)
 
             # 定义参考向量，指向负Z轴方向（垂直向下，符合重力方向）
             reference_vector = np.array([0, 0, -1]).astype(np.float64)

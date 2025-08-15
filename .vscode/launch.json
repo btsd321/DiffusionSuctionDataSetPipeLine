@@ -100,7 +100,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "D:/Diffusion_Suction_DataSet",
+                "G:/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "0",
                 "--scene_list",

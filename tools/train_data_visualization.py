@@ -238,7 +238,7 @@ def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_idx
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='D:/Diffusion_Suction_DataSet/train', help='数据集目录')
+    parser.add_argument('--data_dir', type=str, default='G:/Diffusion_Suction_DataSet/train', help='数据集目录')
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
     parser.add_argument('--vision_normal_type', type=str, default='none', \
@@ -246,7 +246,7 @@ def main():
     parser.add_argument('--vision_normal_num', type=int, default=100, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='suction_feasibility_score', \
+    parser.add_argument('--vision_score_type', type=str, default='suction_wrench_score', \
         choices=['suction_score','suction_wrench_score','suction_feasibility_score', 'visibility_scores'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()

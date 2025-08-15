@@ -224,8 +224,6 @@ if __name__ == "__main__":
         'train_set_dir': TRAIN_SET_DIR,
         'individual_path': INDIVIDUA_PATH
     }
-
-    
     
     # 生成所有循环-场景组合
     tasks = []

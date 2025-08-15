@@ -1306,8 +1306,8 @@ class H5DataGenerator(object):
         
         # === 第5步：标签数据对齐 ===
         # 读取物体尺寸标签（可见面积比例）
-        individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
-        if individual_object_size_lable.size == 0:
+        visibility_scores = self.individual_label_csv(individual_object_size_path)[0]
+        if visibility_scores.size == 0:
             raise ValueError('尺寸标签文件为空！')
      
         # 情况1：点数过多，使用最远点采样(FPS)进行下采样
@@ -1345,7 +1345,7 @@ class H5DataGenerator(object):
             score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
-            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+            score_visibility = self._cal_score_visibility(visibility_scores, obj_ids)
             suction_or = origin_world_normals.astype(np.float32)  # 原始法向量（未翻转）
         # 情况2：点数不足，先计算分数再进行重复采样
         elif num_pnt < self.target_num_point:
@@ -1365,7 +1365,7 @@ class H5DataGenerator(object):
             score_seal_original = self._cal_score_seal(normalized_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench_original = self._cal_score_wrench(normalized_points, world_normals, points_label_trans, camera_info=self.cam_info)
             score_collision_original = self._cal_score_collision(normalized_points, world_normals)
-            score_visibility_original = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+            score_visibility_original = self._cal_score_visibility(visibility_scores, obj_ids)
             # 计算重复次数
             t = int(1.0 * self.target_num_point / num_pnt) + 1
             
@@ -1434,7 +1434,7 @@ class H5DataGenerator(object):
             score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
-            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
+            score_visibility = self._cal_score_visibility(visibility_scores, obj_ids)
             suction_or = origin_world_normals.astype(np.float32)
         # ------------------------------------------------------------------------------------step 5: save as h5 file
         # 保存所有点云、法线、分数等为h5格式
@@ -1447,7 +1447,7 @@ class H5DataGenerator(object):
             f['suction_seal_scores'] = score_seal 
             f['suction_wrench_scores'] = score_wrench
             f['suction_feasibility_scores'] = score_collision
-            f['individual_object_size_lable'] = score_visibility
+            f['visibility_scores'] = score_visibility
 
 
 

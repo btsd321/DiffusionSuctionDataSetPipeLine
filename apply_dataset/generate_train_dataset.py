@@ -28,6 +28,7 @@
 import os
 import common_info
 import scene_loader
+import label_solver
 # 设置CUDA可见设备为GPU 0，用于加速数据处理中的深度学习计算
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 # import torch
@@ -181,10 +182,16 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
             gt_file_path = gt_file_path,
             individual_object_size_path = individual_object_size_path,
             common_info = common_information,
-            output_path = output_h5_path,
         )
+        solver = label_solver.LabelSolver(
+            loader=loader,
+            common_info=common_information,
+            output_points_num=16384,
+            output_file_path=output_h5_path
+        )
+        solver.run()
+        solver.save_to_h5()
 
-        
         thread_safe_print(f"✅ 完成处理循环 {cycle_id}，场景 {scene_id}")
         gc.collect()  # 手动触发垃圾回收，防止内存泄漏
         return (cycle_id, scene_id, True, None)

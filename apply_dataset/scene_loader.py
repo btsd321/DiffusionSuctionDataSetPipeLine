@@ -9,18 +9,20 @@ import cv2
 import Imath
 import OpenEXR
 import open3d as o3d
+import torch
+from pointnet2_ops_lib.pointnet2_ops.pointnet2_utils import furthest_point_sample
+
 import package # 自定义的包裹类
 
 
 
 class SceneLoader:
     def __init__(self, depth_image_path: str, segment_image_path: str, gt_file_path: str, individual_object_size_path: str, \
-                 common_info: common_info.CommonInfo, output_path: str = None):
+                 common_info: common_info.CommonInfo):
         self._depth_image_path = depth_image_path
         self._segment_image_path = segment_image_path
         self._gt_file_path = gt_file_path
         self._individual_file_path = individual_object_size_path
-        self._output_path = output_path
         self._camera_info = common_info.get_camera_info()
         self._parameters = common_info.get_parameters()
 
@@ -34,17 +36,20 @@ class SceneLoader:
         self._label_rot = None
         self._label_id = None
         self._label_name = None
+        self._label_visibility = None # 物体可见性标签
         self._origin_points = None # 原始点云数据
         self._points_in_camera = None # 滤波后的点云数据
         self._normals_in_camera = None # 滤波后的点云法向量
         self._points = None # 滤波后点云在世界坐标系中的坐标
         self._normals_before_flip = None # 滤波后点云在世界坐标系中的法向量（未翻转）
         self._normals = None # 滤波后点云在世界坐标系中的法向量（已翻转）
-        self.opposite_direction_mask = None # 反向法向量掩码(相对于滤波后的法向量)
+        self._opposite_direction_mask = None # 反向法向量掩码(相对于滤波后的法向量)
+        self._visibility = None # 物体可见性，形状(N,3)
         self._packages = {} # 存储场景中的所有包裹
 
         # 开始解析
         self._read_gt_label_csv()
+        self._read_individual_label_csv()
         self._generate_points_cloud()
         self._segment_package()
 
@@ -54,8 +59,8 @@ class SceneLoader:
         '''
         self._normals = np.zeros_like(self._normals_before_flip, dtype=np.float32) # 初始化法向量为零向量
         unique_ids = np.unique(self._obj_ids)
-        self.opposite_direction_mask = np.zeros(self._points.shape[0], dtype=bool)
-
+        self._opposite_direction_mask = np.zeros(self._points.shape[0], dtype=bool)
+        self._visibility = np.zeros((self._points.shape[0],3), dtype=np.float32)
         for obj_id in unique_ids:
             # 创建布尔掩码，选择属于当前物体的点
             mask = (self._obj_ids == obj_id)
@@ -70,14 +75,17 @@ class SceneLoader:
                 "center": self._label_trans[obj_id],
                 "rotation": self._label_rot[obj_id],
                 "name": self._label_name[obj_id],
+                "visibility": self._label_visibility[obj_id],
                 "mask": mask,
                 "indices": indices
             }
 
             self._packages[obj_id] = package.Package(package_init_data)
             # 针对每个包裹翻转法向量使得法向量指向包裹中心
-            self._normals[mask], self.opposite_direction_mask[mask] = self._packages[obj_id].flip_normals()
-
+            self._normals[mask], self._opposite_direction_mask[mask] = self._packages[obj_id].flip_normals()
+            # 获取包裹的可见性数据，确保形状匹配
+            pkg_visibility = self._packages[obj_id].get_visibility()
+            self._visibility[mask] = np.tile(pkg_visibility, (np.sum(mask), 1))
 
     def _read_individual_label_csv(self):
         """
@@ -96,9 +104,9 @@ class SceneLoader:
             all_lines = csv.reader(csv_file) 
             list_file = [i for i in all_lines]  
         # 直接转换为float32数组，不排除标题行（因为数据文件格式）
-        array_file = np.array(list_file).astype('float32')
-        return array_file
-    
+        self._label_visibility = np.array(list_file).astype('float32')
+        return self._label_visibility
+
     def _read_gt_label_csv(self):
         """
         读取场景真值标签CSV文件，获取物体位姿信息
@@ -334,8 +342,53 @@ class SceneLoader:
         # blender中相机朝向为Z轴的负方向，因此在相机坐标系中的坐标应该取反
         return np.concatenate([Xcs, -Ycs, -Zcs], axis=-1)
 
+    def downsample(self, output_points_num = 16384):
+        '''
+        场景下采样时同时对包裹进行下采样
+        '''
+        if len(self._points, axis=0) <= output_points_num:
+            return
+        # 转换为PyTorch张量并移到GPU（如果可用）
+        points_transpose = torch.from_numpy(self._points.reshape(1, self._points.shape[0], self._points.shape[1])).float()
+        points_transpose = points_transpose.cuda()
         
+        # 执行最远点采样，保持点云的几何分布
+        sampled_idx = furthest_point_sample(points_transpose, output_points_num).cpu().numpy().reshape(output_points_num)
+        self._points = self._points[sampled_idx]
+        self._normals = self._normals[sampled_idx]
+        self._obj_ids = self._obj_ids[sampled_idx]
+        self._normals_before_flip = self._normals_before_flip[sampled_idx]
+        self._opposite_direction_mask = self._opposite_direction_mask[sampled_idx]
+        self._visibility = self._visibility[sampled_idx]
+        for obj_id, pkg in self._packages.items():
+            pkg._Package__mask_in_scene = pkg.get_mask_in_scene()[sampled_idx]
+            pkg._Package__indices_in_scene = pkg.get_indices_in_scene()[sampled_idx]
+            pkg._Package__points = pkg.get_pointcloud()[sampled_idx]
+            pkg._Package__normals = pkg.get_normals()[sampled_idx]
+            pkg._Package__normals_before_flip = pkg.get_normals_before_flip()[sampled_idx]
+            pkg._Package__opposite_direction_mask = pkg.get_opposite_direction_mask()[sampled_idx]
+            pkg._Package__visibility = pkg.get_visibility()[sampled_idx]
 
+    def get_pointcloud(self):
+        # 获取点云数据
+        return self._points
     
+    def get_normals(self):
+        # 获取点云法向量
+        return self._normals
 
+    def get_packages(self) -> dict:
+        # 获取场景中的所有包裹
+        return self._packages
+    
+    def get_normals_before_flip(self):
+        # 获取翻转前的法向量
+        return self._normals_before_flip
+    
+    def get_opposite_direction_mask(self):
+        # 获取翻转前的法向量
+        return self._opposite_direction_mask
 
+    def get_visibility(self):
+        # 获取场景中每个点的可见性，返回形状为(N, 3)
+        return self._visibility

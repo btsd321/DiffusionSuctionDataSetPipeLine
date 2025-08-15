@@ -13,7 +13,7 @@ class Package:
             self.__rotation = package_init_data["rotation"] # 包裹旋转信息，形状(9,)
             self.__mask_in_scene = package_init_data["mask"] # 包裹点云在场景点云中的掩码，形状(N',),N'为场景中点的数量
             self.__indices_in_scene = package_init_data["indices"] # 包裹点云在场景点云中的索引，形状(N',),N'为场景中点的数量
-            self.__visibility = package_init_data["visibility"] # 包裹可见性分数
+            self.__visibility = package_init_data["visibility"] # 包裹可见性分数, 形状(1,)
         except KeyError as e:
             print(f"缺少关键字段: {e}")
 

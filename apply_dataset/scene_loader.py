@@ -44,7 +44,7 @@ class SceneLoader:
         self._normals_before_flip = None # 滤波后点云在世界坐标系中的法向量（未翻转）
         self._normals = None # 滤波后点云在世界坐标系中的法向量（已翻转）
         self._opposite_direction_mask = None # 反向法向量掩码(相对于滤波后的法向量)
-        self._visibility = None # 物体可见性，形状(N,3)
+        self._visibilitys = None # 场景中物体可见性，形状(N,)
         self._packages = {} # 存储场景中的所有包裹
 
         # 开始解析
@@ -60,7 +60,7 @@ class SceneLoader:
         self._normals = np.zeros_like(self._normals_before_flip, dtype=np.float32) # 初始化法向量为零向量
         unique_ids = np.unique(self._obj_ids)
         self._opposite_direction_mask = np.zeros(self._points.shape[0], dtype=bool)
-        self._visibility = np.zeros((self._points.shape[0],3), dtype=np.float32)
+        self._visibilitys = np.zeros((self._points.shape[0], 1), dtype=np.float32)
         for obj_id in unique_ids:
             # 创建布尔掩码，选择属于当前物体的点
             mask = (self._obj_ids == obj_id)
@@ -85,7 +85,7 @@ class SceneLoader:
             self._normals[mask], self._opposite_direction_mask[mask] = self._packages[obj_id].flip_normals()
             # 获取包裹的可见性数据，确保形状匹配
             pkg_visibility = self._packages[obj_id].get_visibility()
-            self._visibility[mask] = np.tile(pkg_visibility, (np.sum(mask), 1))
+            self._visibilitys[mask] = np.tile(pkg_visibility, (np.sum(mask), 1))
 
     def _read_individual_label_csv(self):
         """
@@ -359,7 +359,7 @@ class SceneLoader:
         self._obj_ids = self._obj_ids[sampled_idx]
         self._normals_before_flip = self._normals_before_flip[sampled_idx]
         self._opposite_direction_mask = self._opposite_direction_mask[sampled_idx]
-        self._visibility = self._visibility[sampled_idx]
+        self._visibilitys = self._visibilitys[sampled_idx]
         for obj_id, pkg in self._packages.items():
             pkg._Package__mask_in_scene = pkg.get_mask_in_scene()[sampled_idx]
             pkg._Package__indices_in_scene = pkg.get_indices_in_scene()[sampled_idx]
@@ -391,4 +391,4 @@ class SceneLoader:
 
     def get_visibility(self):
         # 获取场景中每个点的可见性，返回形状为(N, 3)
-        return self._visibility
+        return self._visibilitys

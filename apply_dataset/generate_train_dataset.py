@@ -45,7 +45,7 @@ import threading
 from datetime import datetime
     
 # 导入H5数据生成器模块，包含所有数据处理的核心功能
-from H5DataGenerator import *
+# from H5DataGenerator import *
 
 # 命令行参数解析
 parser = argparse.ArgumentParser()
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     SCENE_idx_list = parse_range_or_single(FLAGS.scene_list)
 
     common_information = common_info.CommonInfo(
-            camera_info_file_path = FLAGS.parameter_file,
+            camera_info_file_path = FLAGS.camera_info_file,
             parameter_file_path = FLAGS.parameter_file
         )
 

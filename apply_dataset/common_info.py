@@ -3,11 +3,11 @@ import sys
 import numpy as np
 import json
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'config'))
-from camera_info import CameraInfo
+import camera_info 
 
 class CommonInfo:
     def __init__(self, camera_info_file_path, parameter_file_path):
-        self._camera_info = CameraInfo(camera_info_file_path)
+        self._camera_info = camera_info.get_camera_info_from_yaml(camera_info_file_path)
         self._parameters = self._load_parameters(parameter_file_path)
 
     def _load_parameters(self, params_file_name):

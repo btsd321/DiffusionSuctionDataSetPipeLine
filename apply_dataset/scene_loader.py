@@ -60,7 +60,7 @@ class SceneLoader:
         self._normals = np.zeros_like(self._normals_before_flip, dtype=np.float32) # 初始化法向量为零向量
         unique_ids = np.unique(self._obj_ids)
         self._opposite_direction_mask = np.zeros(self._points.shape[0], dtype=bool)
-        self._visibilitys = np.zeros((self._points.shape[0], 1), dtype=np.float32)
+        self._visibilitys = np.zeros(self._points.shape[0], dtype=np.float32)
         for obj_id in unique_ids:
             # 创建布尔掩码，选择属于当前物体的点
             mask = (self._obj_ids == obj_id)
@@ -85,7 +85,7 @@ class SceneLoader:
             self._normals[mask], self._opposite_direction_mask[mask] = self._packages[obj_id].flip_normals()
             # 获取包裹的可见性数据，确保形状匹配
             pkg_visibility = self._packages[obj_id].get_visibility()
-            self._visibilitys[mask] = np.tile(pkg_visibility, (np.sum(mask), 1))
+            self._visibilitys[mask] = np.tile(pkg_visibility, np.sum(mask))
 
     def _read_individual_label_csv(self):
         """
@@ -171,7 +171,7 @@ class SceneLoader:
         # 提取非零深度像素的坐标（前景点）
         ys, xs = np.where(valid_mask)
         zs = self._depth_image[valid_mask]
-        self._origin_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=True)
+        self._origin_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
 
         segment_img_int = np.round(self._segment_image[:, :, 1] / step)
         # obj_ids 点所在物体在场景中的ID
@@ -217,7 +217,7 @@ class SceneLoader:
         
         # 重新归一化法向量
         norms = np.linalg.norm(normals_world, axis=1, keepdims=True)
-        if norms == 0:  # 避免除零
+        if np.any(norms == 0):  # 避免除零
             raise ValueError("法向量归一化时存在零向量")
         normals_world = normals_world / norms  
         
@@ -232,7 +232,7 @@ class SceneLoader:
             
             # 应用半径滤波
             pcd_filtered, inlier_indices_radius = pcd.remove_radius_outlier(
-                nb_points=nb_points, filter_radius=filter_radius
+                nb_points, filter_radius
             )
             
             # 转换回numpy数组
@@ -274,7 +274,9 @@ class SceneLoader:
             filter_mask = np.zeros_like(inlier_mask1, dtype=bool)
             
             # 在之前被保留的点中，进一步标记通过Z轴过滤的点
-            z_passed_indices = inlier_indices_radius[z_filter_mask]
+            z_passed_positions = np.where(z_filter_mask)[0]
+            z_passed_indices = np.array(inlier_indices_radius)[z_passed_positions]
+            z_passed_indices = z_passed_indices.astype(int)
             filter_mask[z_passed_indices] = True
             
             return z_filtered_points, z_filtered_normals, filter_mask
@@ -306,26 +308,22 @@ class SceneLoader:
             blender中相机朝向为Z轴的负方向，因此在相机坐标系中深度应该为负值
         """
         assert len(us) == len(vs) == len(zs), "坐标数组长度必须一致"
-
-        def _filter_points(self):
-            pass
         
         # 从参数配置中获取相机内参
-        fx = self.cam_info.intrinsic_matrix[0, 0]
-        fy = self.cam_info.intrinsic_matrix[1, 1]
-        cx = self.cam_info.intrinsic_matrix[0, 2]  # x方向主点坐标
-        cy = self.cam_info.intrinsic_matrix[1, 2]  # y方向主点坐标
-        clip_start = self.params['clip_start']  # 近裁剪面距离
-        clip_end = self.params['clip_end']      # 远裁剪面距离
+        fx = self._camera_info.intrinsic_matrix[0, 0]
+        fy = self._camera_info.intrinsic_matrix[1, 1]
+        cx = self._camera_info.intrinsic_matrix[0, 2]  # x方向主点坐标
+        cy = self._camera_info.intrinsic_matrix[1, 2]  # y方向主点坐标
+        clip_start = self._parameters['clip_start']  # 近裁剪面距离
+        clip_end = self._parameters['clip_end']      # 远裁剪面距离
         
         # 将归一化深度值转换为真实距离（米）
         # 深度图中的值通常是归一化的，需要映射到真实距离范围
-        Zline = clip_start + (zs/self.params['max_val_in_depth']) * (clip_end - clip_start)
+        Zline = clip_start + (zs/self._parameters['max_val_in_depth']) * (clip_end - clip_start)
         
         # 考虑透视投影的距离校正
         # 校正由于透视投影导致的距离失真
         Zcs = Zline/np.sqrt(1+ np.power((us-cx)/fx,2) + np.power((vs-cy)/fy,2))
-        
         # 可选：转换为毫米单位（某些应用需要）
         if to_mm:
             Zcs *= 1000
@@ -340,7 +338,8 @@ class SceneLoader:
         Ycs = np.reshape(Ycs, (-1, 1))
         Zcs = np.reshape(Zcs, (-1, 1))
         # blender中相机朝向为Z轴的负方向，因此在相机坐标系中的坐标应该取反
-        return np.concatenate([Xcs, -Ycs, -Zcs], axis=-1)
+        points = np.concatenate([Xcs, -Ycs, -Zcs], axis=-1)
+        return points
 
     def downsample(self, output_points_num = 16384):
         '''

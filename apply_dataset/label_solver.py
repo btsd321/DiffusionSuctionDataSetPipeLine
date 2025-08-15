@@ -130,7 +130,7 @@ class LabelSolver:
         # 输入参数定义
         self._input_pointcloud = None
         self._input_normals = None
-        self._input_normalsbefore_flip = None
+        self._input_normals_before_flip = None
         self._input_packages = None
 
         # 输出参数定义,一维形状必须是self._output_points_num
@@ -148,7 +148,7 @@ class LabelSolver:
             # 先计算分数再上采样
             self._input_pointcloud = self._input_loader.get_pointcloud()
             self._input_normals = self._input_loader.get_normals()
-            self._input_normalsbefore_flip = self._input_loader.get_normals_before_flip()
+            self._input_normals_before_flip = self._input_loader.get_normals_before_flip()
             self._input_packages = self._input_loader.get_packages()
 
             origin_wrench_scores = self._cal_wrench_scores()
@@ -160,7 +160,7 @@ class LabelSolver:
             t = int(1.0 * self._output_points_num / self._input_pointcloud.shape[0]) + 1
             points_tile = np.tile(self._input_pointcloud, [t, 1])
             self._output_pointcloud = points_tile[:self._output_points_num]
-            normals_before_flip_tile = np.tile(self._input_normalsbefore_flip, [t, 1])
+            normals_before_flip_tile = np.tile(self._input_normals_before_flip, [t, 1])
             self._output_normals_before_flip = normals_before_flip_tile[:self._output_points_num]
             # normals_tile = np.tile(self._input_normals, [t, 1])
             # self._output_normals = normals_tile[:self._output_points_num]
@@ -185,7 +185,7 @@ class LabelSolver:
             self._input_loader.downsample(self._output_points_num)
             self._input_pointcloud = self._input_loader.get_pointcloud()
             self._input_normals = self._input_loader.get_normals()
-            self._input_normalsbefore_flip = self._input_loader.get_normals_before_flip()
+            self._input_normals_before_flip = self._input_loader.get_normals_before_flip()
             self._input_packages = self._input_loader.get_packages()
 
             self._wrench_scores = self._cal_wrench_scores()
@@ -297,20 +297,6 @@ class LabelSolver:
         # 计算吸取点的可行性分数(碰撞检测)
         height = 0.15 # 吸盘高度
         radius = 0.02 # 吸盘半径
-        # suction_feasibility_scores = []
-        # for index_temp,suction_points_temp in enumerate(suction_points):
-        #     suction_or_temp = suction_or[index_temp]
-        #     grasp_poses = viewpoint_to_matrix_x(suction_or_temp)
-        #     target = scence_point-suction_points_temp
-        #     target = np.matmul(target, grasp_poses)
-        #     target_yz = target[:, 1:3]
-        #     target_r = np.linalg.norm(target_yz, axis=-1)
-        #     mask1 = target_r < radius
-        #     mask2 = ((target[:,0] > 0.01) & (target[:,0] < height))
-        #     mask = np.any(mask1 & mask2)
-        #     suction_feasibility_scores.append(mask)
-        # suction_feasibility_scores = ~np.array(suction_feasibility_scores)
-        # return suction_feasibility_scores
         try:
             pointcloud = self._input_loader.get_pointcloud()
             scores = np.zeros(pointcloud.shape[0], dtype=np.bool)

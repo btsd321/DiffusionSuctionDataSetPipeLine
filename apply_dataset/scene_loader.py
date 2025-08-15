@@ -386,7 +386,7 @@ class SceneLoader:
     
     def get_opposite_direction_mask(self):
         # 获取翻转前的法向量
-        return self._opposite_direction_mask # 形状(1,N)
+        return self._opposite_direction_mask
 
     def get_visibility(self):
         # 获取场景中每个点的可见性，返回形状为(N, 3)

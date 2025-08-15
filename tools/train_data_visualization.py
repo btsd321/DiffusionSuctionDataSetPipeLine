@@ -246,7 +246,7 @@ def main():
     parser.add_argument('--vision_normal_num', type=int, default=100, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='suction_wrench_score', \
+    parser.add_argument('--vision_score_type', type=str, default='suction_score', \
         choices=['suction_score','suction_wrench_score','suction_feasibility_score', 'visibility_scores'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
@@ -283,7 +283,6 @@ def main():
             suction_wrench_scores = np.ascontiguousarray(suction_wrench_scores)
             suction_feasibility_scores = np.ascontiguousarray(suction_feasibility_scores)
             visibility_scores = np.ascontiguousarray(visibility_scores)
-            test_scores = np.ascontiguousarray(test_scores)
             
     suction_score = suction_wrench_scores * suction_feasibility_scores * visibility_scores
     

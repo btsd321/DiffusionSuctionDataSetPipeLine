@@ -1208,65 +1208,6 @@ class H5DataGenerator(object):
         print(f"可用颜色数: {len(colors_list)}")
         print(f"颜色重复使用: {'是' if num_objects > len(colors_list) else '否'}")
     
-    def _cal_test_score(self, points, normals, obj_ids, translations, rotations, visibility = False):
-        """
-        输入：
-            points: 点云数据，形状为(N, 3)
-            normals: 法向量数据，形状为(N, 3)
-            obj_ids: 每个点对应的物体ID，形状为(N,)
-            translations: 每个点对应的物体位姿平移向量，形状为(N, 3)，其值相当于该点对应的物体的中心坐标
-            rotations: 每个点对应的物体位姿旋转矩阵，形状为(N, 9)，其值相当于该点对应的物体的旋转矩阵
-        输出：
-            scores: 各个点的评分，形状为(N,)
-        """
-        scores = np.zeros(points.shape[0])
-        # 获取唯一的物体ID
-        unique_ids = np.unique(obj_ids)
-        
-        # 存储分离后的点云
-        separated_clouds = {}
-        
-        for obj_id in unique_ids:
-            # 创建布尔掩码，选择属于当前物体的点
-            mask = (obj_ids == obj_id)
-            # 计算indices
-            indices = np.where(mask)[0]
-            
-            # 提取对应的数据
-            obj_data = {
-                'points': points[mask],
-                'normals': normals[mask],
-                'obj_id': obj_id,
-                'num_points': np.sum(mask),
-                'origin_indices': indices,
-                'translations': translations[mask],
-                'rotations': rotations[mask]
-            }
-            
-            separated_clouds[int(obj_id)] = obj_data
-            
-            # 计算每个物体上每个点的评分
-            scores[mask] = self._cal_single_object_test_score(obj_data)
-        return scores, separated_clouds
-            
-    def _cal_single_object_test_score(self, obj_data):
-        points = obj_data['points'] # 形状：[N, 3]
-        center = obj_data['translations'][0]  # 形状：[3]
-        normals = obj_data['normals'] # 形状：[N, 3]
-        # 计算每个点与中心点的向量（力矩）
-        points_to_center = points - center # 形状：[N, 3]
-        # 计算法向量与力矩的夹角
-        dot_products = np.sum(normals * points_to_center, axis=1)  # 形状：[N]
-        # 计算每个法向量的模长（向量长度）
-        norm_magnitudes = np.linalg.norm(normals, axis=1) # 形状：[N]
-        # 计算力矩的模长
-        norm_points_to_center = np.linalg.norm(points_to_center, axis=1)  # 形状：[N]
-        # 计算夹角的余弦值
-        cos_angle = np.abs(dot_products / (norm_magnitudes * norm_points_to_center))
-        # 防止数值误差导致的域错误
-        return np.clip(cos_angle, 0.0, 1.0)
-        
-    
     def process_train_set(self, depth_img, segment_img, gt_file_path, output_file_path, individual_object_size_path):
         """
         处理单个训练样本，生成完整的H5数据集
@@ -1365,8 +1306,8 @@ class H5DataGenerator(object):
         
         # === 第5步：标签数据对齐 ===
         # 读取物体尺寸标签（可见面积比例）
-        individual_object_size_lable = self.individual_label_csv(individual_object_size_path)[0]
-        if individual_object_size_lable.size == 0:
+        visibility_scores = self.individual_label_csv(individual_object_size_path)[0]
+        if visibility_scores.size == 0:
             raise ValueError('尺寸标签文件为空！')
      
         # 情况1：点数过多，使用最远点采样(FPS)进行下采样
@@ -1404,8 +1345,7 @@ class H5DataGenerator(object):
             score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
-            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-            score_test, separated_clouds = self._cal_test_score(suction_points, suction_or, obj_ids, points_label_trans, points_label_rot)
+            score_visibility = self._cal_score_visibility(visibility_scores, obj_ids)
             suction_or = origin_world_normals.astype(np.float32)  # 原始法向量（未翻转）
         # 情况2：点数不足，先计算分数再进行重复采样
         elif num_pnt < self.target_num_point:
@@ -1425,8 +1365,7 @@ class H5DataGenerator(object):
             score_seal_original = self._cal_score_seal(normalized_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench_original = self._cal_score_wrench(normalized_points, world_normals, points_label_trans, camera_info=self.cam_info)
             score_collision_original = self._cal_score_collision(normalized_points, world_normals)
-            score_visibility_original = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-            score_test_original, separated_clouds = self._cal_test_score(normalized_points, world_normals, obj_ids, points_label_trans, points_label_rot)
+            score_visibility_original = self._cal_score_visibility(visibility_scores, obj_ids)
             # 计算重复次数
             t = int(1.0 * self.target_num_point / num_pnt) + 1
             
@@ -1468,10 +1407,7 @@ class H5DataGenerator(object):
             
             score_visibility_tile = np.tile(score_visibility_original, [t])
             score_visibility = score_visibility_tile[:self.target_num_point]
-            
-            score_test_tile = np.tile(score_test_original, [t])
-            score_test = score_test_tile[:self.target_num_point]
-            
+
             # 提取处理后的数据
             suction_points = normalized_points
             suction_or = origin_world_normals.astype(np.float32)
@@ -1498,8 +1434,7 @@ class H5DataGenerator(object):
             score_seal = self._cal_score_seal(suction_points, obj_ids, points_label_trans, points_label_rot, label_name)
             score_wrench = self._cal_score_wrench(suction_points, suction_or, points_label_trans, camera_info=self.cam_info)
             score_collision = self._cal_score_collision(suction_points, suction_or)
-            score_visibility = self._cal_score_visibility(individual_object_size_lable, obj_ids)
-            score_test, separated_clouds = self._cal_test_score(suction_points, suction_or, obj_ids, points_label_trans, points_label_rot)
+            score_visibility = self._cal_score_visibility(visibility_scores, obj_ids)
             suction_or = origin_world_normals.astype(np.float32)
         # ------------------------------------------------------------------------------------step 5: save as h5 file
         # 保存所有点云、法线、分数等为h5格式
@@ -1512,8 +1447,7 @@ class H5DataGenerator(object):
             f['suction_seal_scores'] = score_seal 
             f['suction_wrench_scores'] = score_wrench
             f['suction_feasibility_scores'] = score_collision
-            f['individual_object_size_lable'] = score_visibility
-            f['test_scores'] = score_test
+            f['visibility_scores'] = score_visibility
 
 
 

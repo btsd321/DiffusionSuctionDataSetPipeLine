@@ -29,8 +29,6 @@ from datetime import datetime
 
 matplotlib.rcParams['axes.unicode_minus'] = False    # 负号正常显示
 
-font = FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
-
 def read_exr_to_numpy(filepath):
     """
     使用OpenEXR读取EXR文件并转换为numpy数组，假定为3通道float32格式。

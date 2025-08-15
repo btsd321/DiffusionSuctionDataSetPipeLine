@@ -2,7 +2,7 @@ import os
 import yaml
 
 class CameraInfo:
-    def __init__(self, file_path):
+    def __init__(self, file_path, print_flag=False):
         # 判断文件是否存在
         if not os.path.exists(file_path):
             raise FileNotFoundError("Camera info file not found.")
@@ -14,12 +14,24 @@ class CameraInfo:
             raise ValueError(f"YAML文件解析失败: {e}\n请检查文件格式是否正确: {file_path}")
 
         # 直接作为属性暴露常用参数
-        self.focal_length = self.camera_info.get('focal_length')
-        self.sensor_size = self.camera_info.get('sensor_size')
-        self.cam_translation_vector = self.camera_info.get('cam_translation_vector')
-        self.cam_quaternions = self.camera_info.get('cam_quaternions')
-        self.extrinsic_matrix = self._to_matrix(self.camera_info.get('extrinsic_matrix'))
-        self.intrinsic_matrix = self._to_matrix(self.camera_info.get('intrinsic_matrix'))
+        try:
+            self.focal_length = self.camera_info.get('focal_length')
+            self.sensor_size = self.camera_info.get('sensor_size')
+            self.cam_translation_vector = self.camera_info.get('cam_translation_vector')
+            self.cam_quaternions = self.camera_info.get('cam_quaternions')
+            self.extrinsic_matrix = self._to_matrix(self.camera_info.get('extrinsic_matrix'))
+            self.intrinsic_matrix = self._to_matrix(self.camera_info.get('intrinsic_matrix'))
+            if print_flag:
+                print(f"相机参数文件路径: {file_path}")
+                print(f'yaml文件内容: {self.camera_info}')
+                print(f"焦距: {self.focal_length}")
+                print(f"传感器尺寸: {self.sensor_size}")
+                print(f"相机平移向量: {self.cam_translation_vector}")
+                print(f"相机四元数: {self.cam_quaternions}")
+                print(f"相机外参矩阵: {self.extrinsic_matrix}")
+                print(f"相机内参矩阵: {self.intrinsic_matrix}")
+        except Exception as e:
+            raise ValueError(f"缺少必要的相机参数: {e}\n请检查文件内容是否正确: {file_path}")
 
     def _to_matrix(self, mat):
         """
@@ -59,6 +71,6 @@ def get_camera_info_from_yaml(file_path):
 
 
 if __name__ == '__main__':
-    file_path = r"D:/Project/DiffusionSuctionDataSetPipeLine/camera_info/camera_info.yaml"
+    file_path = r"D:/Project/DiffusionSuctionDataSetPipeLine-windows/config/camera_info.yaml"
     camera_info = get_camera_info_from_yaml(file_path)
     print(camera_info)

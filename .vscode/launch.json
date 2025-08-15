@@ -85,9 +85,9 @@
                 "--data_dir",
                 "/home/lixinlong/Data/Diffusion_Suction_DataSet",
                 "--cycle_list",
-                "[21,30]",
+                "0",
                 "--scene_list",
-                "[1,50]",
+                "1",
                 "--camera_info_file",
                 "${workspaceFolder}/config/camera_info.yaml"
             ]
@@ -100,7 +100,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--data_dir",
-                "G:/Diffusion_Suction_DataSet",
+                "D:/Diffusion_Suction_DataSet",
                 "--cycle_list",
                 "0",
                 "--scene_list",

@@ -26,6 +26,8 @@
 @checked: Huang Dingtao
 """
 import os
+import cProfile
+import pstats
 import common_info
 import scene_loader
 import label_solver
@@ -104,7 +106,7 @@ OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含O
 GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
 INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
-
+DEBUG = True  # 是否启用性能分析和调试模式
 
 # 线程安全的打印锁
 print_lock = threading.Lock()
@@ -175,22 +177,49 @@ def process_single_cycle_scene(cycle_id, scene_id, data_generator_params):
             '{:0>3}.csv'.format(scene_id)
         )
 
-        # 6. 核心处理步骤：调用数据生成器处理当前场景
-        loader = scene_loader.SceneLoader(
-            depth_image_path = depth_image_path,
-            segment_image_path = seg_img_path,
-            gt_file_path = gt_file_path,
-            individual_object_size_path = individual_object_size_path,
-            common_info = common_information,
-        )
-        solver = label_solver.LabelSolver(
-            loader=loader,
-            common_info=common_information,
-            output_points_num=16384,
-            output_file_path=output_h5_path
-        )
-        solver.run()
-        solver.save_to_h5()
+        # 使用cProfile分析性能
+        if DEBUG:
+            profiler = cProfile.Profile()
+            profiler.enable()
+            # 6. 核心处理步骤：调用数据生成器处理当前场景
+            loader = scene_loader.SceneLoader(
+                depth_image_path = depth_image_path,
+                segment_image_path = seg_img_path,
+                gt_file_path = gt_file_path,
+                individual_object_size_path = individual_object_size_path,
+                common_info = common_information,
+            )
+            solver = label_solver.LabelSolver(
+                loader=loader,
+                common_info=common_information,
+                output_points_num=16384,
+                output_file_path=output_h5_path,
+            )
+            solver.run()
+            profiler.disable()
+            
+            # 分析并输出性能统计
+            stats = pstats.Stats(profiler)
+            stats.sort_stats('cumulative')
+            stats.print_stats(10)  # 显示前10个最耗时的函数
+            
+            solver.save_to_h5()
+        else:
+            loader = scene_loader.SceneLoader(
+                depth_image_path = depth_image_path,
+                segment_image_path = seg_img_path,
+                gt_file_path = gt_file_path,
+                individual_object_size_path = individual_object_size_path,
+                common_info = common_information,
+            )
+            solver = label_solver.LabelSolver(
+                loader=loader,
+                common_info=common_information,
+                output_points_num=16384,
+                output_file_path=output_h5_path,
+            )
+            solver.run()
+            solver.save_to_h5()
 
         thread_safe_print(f"✅ 完成处理循环 {cycle_id}，场景 {scene_id}")
         gc.collect()  # 手动触发垃圾回收，防止内存泄漏

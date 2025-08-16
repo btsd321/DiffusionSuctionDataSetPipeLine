@@ -109,7 +109,13 @@
                 "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file",
                 "${workspaceFolder}/config/parameter.json"
-            ]
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0",
+                "CUDA_HOME": "/usr/local/cuda-11.8",
+                "PATH": "/usr/local/cuda-11.8/bin:${env:PATH}",
+                "LD_LIBRARY_PATH": "/usr/local/cuda-11.8/lib64:${env:LD_LIBRARY_PATH}",
+            }
         },
         {
             "name": "tools: check_png.py",

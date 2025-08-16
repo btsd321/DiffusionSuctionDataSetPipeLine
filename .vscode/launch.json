@@ -104,7 +104,7 @@
                 "--cycle_list",
                 "0",
                 "--scene_list",
-                "50",
+                "27",
                 "--camera_info_file",
                 "${workspaceFolder}/config/camera_info.yaml",
                 "--parameter_file",

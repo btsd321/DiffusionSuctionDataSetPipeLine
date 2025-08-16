@@ -30,6 +30,7 @@ class SceneLoader:
         self._depth_image = None
         self._segment_image = None
         self._obj_num = 0
+        self._raw_obj_ids  = None
         self._orgin_obj_ids = None  # 原始点云中每个点对应的物体在场景中的ID
         self._obj_ids = None # 滤波后点云中每个点对应的物体在场景中的ID
         self._label_trans = None
@@ -37,6 +38,7 @@ class SceneLoader:
         self._label_id = None
         self._label_name = None
         self._label_visibility = None # 物体可见性标签
+        self._raw_points = None
         self._origin_points = None # 原始点云数据
         self._points_in_camera = None # 滤波后的点云数据
         self._normals_in_camera = None # 滤波后的点云法向量
@@ -72,7 +74,7 @@ class SceneLoader:
             package_init_data = {
                 "points": self._points[indices],
                 "normals_before_flip": self._normals_before_flip[indices],
-                "center": self._label_trans[obj_id],
+                "center": self._label_trans[obj_id, :3],
                 "rotation": self._label_rot[obj_id],
                 "name": self._label_name[obj_id],
                 "visibility": self._label_visibility[0, obj_id],
@@ -165,21 +167,37 @@ class SceneLoader:
             step = 1.0  # 单个物体时，物体ID归一化步长为1
         else:    
             step = 1/(self._obj_num - 1)
-        obj_ids = np.full(self._segment_image[:, :, 1].shape, 0, dtype=np.float32)
+        raw_obj_ids = np.full(self._segment_image[:, :, 1].shape, 0, dtype=np.float32)
         valid_mask = (self._segment_image[:, :, 0] > 0.5)  # 前景点掩码
         
         # 提取非零深度像素的坐标（前景点）
         ys, xs = np.where(valid_mask)
         zs = self._depth_image[valid_mask]
-        self._origin_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
+        self._raw_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
 
         segment_img_int = np.round(self._segment_image[:, :, 1] / step)
         # obj_ids 点所在物体在场景中的ID
-        orgin_obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
-        self._orgin_obj_ids = orgin_obj_ids.astype('int')  # 转换为整数类型
-
+        raw_obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
+        self._raw_obj_ids = raw_obj_ids.astype('int')  # 转换为整数类型
+        
+        # 如果有点云的物体索引超过self._obj_num-1，则检查多少个点索引超出了self._obj_num-1，如果较少则滤波，如果较多则直接抛出异常
+        raw_unique_ids = np.unique(self._raw_obj_ids)
+        if np.max(raw_unique_ids) >= self._obj_num:
+            if np.max(raw_unique_ids) >= self._obj_num + 1:
+                raise ValueError(f"点云中的物体索引超出了self._obj_num+1，请检查数据集！") 
+            # 获取超出的点索引
+            out_of_range_indices = np.where(raw_unique_ids >= self._obj_num)[0]
+            # 获取超出的点数量
+            num_out_of_range = len(out_of_range_indices)
+            if num_out_of_range >= 50:
+                raise ValueError(f"点云中的物体索引异常过多，请检查数据集！")
+            else:
+                self._origin_points = self._raw_points[out_of_range_indices]
+                self._origin_obj_ids = self._raw_obj_ids[out_of_range_indices]
+                print(f'warn: {num_out_of_range}个点超出物体索引范围，已删除')
+            
         self._points_in_camera, self._normals_in_camera, inlier_mask = self._filter_point_cloud()
-        self._obj_ids = self._orgin_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
+        self._obj_ids = self._raw_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
 
         # 转换到世界坐标系
         self._points, self._normals_before_flip = self._transform_to_world_coordinates()

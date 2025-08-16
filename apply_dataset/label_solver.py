@@ -142,7 +142,6 @@ class LabelSolver:
         self._output_wrench_scores = None  # 扭矩评分
 
     def run(self):
-        print("开始计算标签数据...")
         input_point_cloud_num = self._input_loader.get_pointcloud().shape[0]
         if input_point_cloud_num < self._output_points_num:
             # 先计算分数再上采样
@@ -194,7 +193,6 @@ class LabelSolver:
             self._output_opposite_direction_mask = self._cal_opposite_direction_mask()
             self._output_visibility = self._cal_visibility_scores()
             self._output_feasibility_scores = self._cal_feasibility_scores()
-        print("标签数据计算完成。")
 
     def save_to_h5(self, save_path:str = None):
         if save_path is None:

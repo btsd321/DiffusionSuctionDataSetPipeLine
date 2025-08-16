@@ -289,31 +289,150 @@ class LabelSolver:
         except Exception as e:
             print(f"Error occurred while calculating wrench scores: {e}")
             raise e
-        
-    def _cal_feasibility_scores(self):
+    
+    
+    
+    def _cal_feasibility_scores(self, device = 'cuda'):
         '''
         计算可行性评分(和其他物体是否有碰撞的评分)
         '''
-        # 计算吸取点的可行性分数(碰撞检测)
         height = 0.15 # 吸盘高度
         radius = 0.02 # 吸盘半径
-        try:
-            pointcloud = self._input_loader.get_pointcloud()
-            scores = np.zeros(pointcloud.shape[0], dtype=np.bool)
-            for index, point in enumerate(pointcloud):
-                targets = pointcloud.copy()
-                normal = self._input_loader.get_normals()[index]
-                rotation_matrix = _viewpoint_to_matrix_x(normal)
-                targets = targets - point
-                targets = np.matmul(targets, rotation_matrix)
-                targets_yz = targets[:, 1:3]
-                targets_r = np.linalg.norm(targets_yz, axis=-1)
+        if device == 'cpu':
+            # 计算吸取点的可行性分数(碰撞检测)
+            try:
+                pointcloud = self._input_loader.get_pointcloud()
+                scores = np.zeros(pointcloud.shape[0], dtype=np.bool)
+                for index, point in enumerate(pointcloud):
+                    targets = pointcloud.copy()
+                    normal = self._input_loader.get_normals()[index]
+                    rotation_matrix = _viewpoint_to_matrix_x(normal)
+                    targets = targets - point
+                    targets = np.matmul(targets, rotation_matrix)
+                    targets_yz = targets[:, 1:3]
+                    targets_r = np.linalg.norm(targets_yz, axis=-1)
+                    mask1 = targets_r < radius
+                    mask2 = ((targets[:,0] > 0.01) & (targets[:,0] < height))
+                    mask = np.any(mask1 & mask2)
+                    scores[index] = mask
+                scores = ~np.array(scores)  # 转换为布尔类型并取反
+                return scores.astype(np.float32)
+            except Exception as e:
+                print(f"Error occurred while calculating feasibility scores: {e}")
+                raise e
+        else:
+            return self.__cal_feasibility_scores_gpu(radius = radius, height = height)
+        
+        
+    def __cal_feasibility_scores_gpu(self, radius=1.0, height=1.0):
+        # GPU内核函数
+        import math
+        from numba import cuda
+        if not cuda.is_available():
+            raise RuntimeError("CUDA is not available. Please check your environment.")
+        @cuda.jit
+        def collision_kernel(pointcloud, normals, collision_detected, height, radius, N):
+            idx = cuda.grid(1)
+            if idx >= N:
+                return
+            
+            # 当前点和法向量
+            px, py, pz = pointcloud[idx, 0], pointcloud[idx, 1], pointcloud[idx, 2]
+            nx, ny, nz = normals[idx, 0], normals[idx, 1], normals[idx, 2]
+            
+            # 标准化法向量
+            n_norm = math.sqrt(nx*nx + ny*ny + nz*nz)
+            if n_norm < 1e-10:
+                collision_detected[idx] = False
+                return
+            nx, ny, nz = nx/n_norm, ny/n_norm, nz/n_norm
+            
+            # 构建旋转矩阵（_viewpoint_to_matrix_x的GPU实现）
+            # 设置x轴为法向量方向
+            new_x_x, new_x_y, new_x_z = nx, ny, nz
+            
+            # 构造z轴，垂直于x轴：[0, -new_x[2], new_x[1]]
+            new_z_x = 0.0
+            new_z_y = -new_x_z
+            new_z_z = new_x_y
+            
+            # 处理法向量接近x轴的特殊情况
+            z_norm = math.sqrt(new_z_x*new_z_x + new_z_y*new_z_y + new_z_z*new_z_z)
+            if z_norm < 1e-6:
+                # 使用 [0, 0, 1] 作为z轴
+                new_z_x, new_z_y, new_z_z = 0.0, 0.0, 1.0
+            else:
+                # 标准化z轴
+                new_z_x, new_z_y, new_z_z = new_z_x/z_norm, new_z_y/z_norm, new_z_z/z_norm
+            
+            # 通过叉积计算y轴：y = z × x
+            new_y_x = new_z_y * new_x_z - new_z_z * new_x_y
+            new_y_y = new_z_z * new_x_x - new_z_x * new_x_z
+            new_y_z = new_z_x * new_x_y - new_z_y * new_x_x
+            
+            # 标准化y轴
+            y_norm = math.sqrt(new_y_x*new_y_x + new_y_y*new_y_y + new_y_z*new_y_z)
+            if y_norm < 1e-10:
+                collision_detected[idx] = False
+                return
+            new_y_x, new_y_y, new_y_z = new_y_x/y_norm, new_y_y/y_norm, new_y_z/y_norm
+            
+            # 旋转矩阵 [x, y, z] 作为列向量
+            # rotation_matrix = [[new_x_x, new_y_x, new_z_x],
+            #                   [new_x_y, new_y_y, new_z_y],
+            #                   [new_x_z, new_y_z, new_z_z]]
+            
+            # 检查与所有其他点的碰撞
+            has_collision = False
+            for i in range(N):
+                if i == idx:
+                    continue
+                
+                # 相对位置
+                dx = pointcloud[i, 0] - px
+                dy = pointcloud[i, 1] - py
+                dz = pointcloud[i, 2] - pz
+                
+                # 坐标变换：targets = relative_positions @ rotation_matrix.T
+                # 即 targets = rotation_matrix.T @ relative_positions
+                target_x = new_x_x * dx + new_x_y * dy + new_x_z * dz
+                target_y = new_y_x * dx + new_y_y * dy + new_y_z * dz
+                target_z = new_z_x * dx + new_z_y * dy + new_z_z * dz
+                
+                # 碰撞检测逻辑（对应CPU版本）
+                # targets_yz = targets[:, 1:3]  -> [target_y, target_z]
+                # targets_r = np.linalg.norm(targets_yz, axis=-1)
+                targets_r = math.sqrt(target_y * target_y + target_z * target_z)
+                
+                # mask1 = targets_r < radius
                 mask1 = targets_r < radius
-                mask2 = ((targets[:,0] > 0.01) & (targets[:,0] < height))
-                mask = np.any(mask1 & mask2)
-                scores[index] = mask
-            scores = ~np.array(scores)  # 转换为布尔类型并取反
-            return scores.astype(np.float32)
-        except Exception as e:
-            print(f"Error occurred while calculating feasibility scores: {e}")
-            raise e
+                
+                # mask2 = ((targets[:,0] > 0.01) & (targets[:,0] < height))
+                mask2 = (target_x > 0.01) and (target_x < height)
+                
+                # 综合判断
+                if mask1 and mask2:
+                    has_collision = True
+                    break
+            
+            collision_detected[idx] = has_collision
+            
+        # 准备GPU数据
+        d_pointcloud = cuda.to_device(self._input_loader.get_pointcloud())
+        d_normals = cuda.to_device(self._input_loader.get_normals())
+        N = self._input_loader.get_pointcloud().shape[0]
+        d_collision_detected = cuda.device_array(N, dtype=np.bool_)
+        
+        # 启动GPU内核
+        threads_per_block = 512  # 每个线程块的线程数
+        blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
+        
+        collision_kernel[blocks_per_grid, threads_per_block](
+            d_pointcloud, d_normals, d_collision_detected, height, radius, N
+        )
+        
+        # 复制结果回CPU
+        collision_detected = d_collision_detected.copy_to_host()
+        feasibility_scores = (~collision_detected).astype(np.float32)
+        
+        return feasibility_scores

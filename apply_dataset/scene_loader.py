@@ -75,7 +75,7 @@ class SceneLoader:
                 "center": self._label_trans[obj_id],
                 "rotation": self._label_rot[obj_id],
                 "name": self._label_name[obj_id],
-                "visibility": self._label_visibility[obj_id],
+                "visibility": self._label_visibility[0, obj_id],
                 "mask": mask,
                 "indices": indices
             }
@@ -211,7 +211,6 @@ class SceneLoader:
         # 法向量只需要旋转变换，提取旋转矩阵部分
         rotation_matrix = self._camera_info.extrinsic_matrix[:3, :3].T
         
-        print(f'normals.shape : {self._normals_in_camera.shape}')
         # 应用旋转变换
         normals_world = (rotation_matrix @ self._normals_in_camera.T).T # 形状: (N, 3)
         
@@ -242,8 +241,8 @@ class SceneLoader:
             inlier_mask1 = np.zeros(self._origin_points.shape[0], dtype=bool)
             inlier_mask1[inlier_indices_radius] = True
             
-            print(f"半径滤波: 原始点数 {self._origin_points.shape[0]}, 过滤后点数 {radius_filtered_points.shape[0]}")
-            print(f"掩码统计: True={np.sum(inlier_mask1)}, False={np.sum(~inlier_mask1)}")
+            # print(f"半径滤波: 原始点数 {self._origin_points.shape[0]}, 过滤后点数 {radius_filtered_points.shape[0]}")
+            # print(f"掩码统计: True={np.sum(inlier_mask1)}, False={np.sum(~inlier_mask1)}")
             # self._obj_ids_after_filter_1 = self._orgin_obj_ids[inlier_mask1]  # 滤波后点云中每个点对应的物体ID
 
             # 计算法向量（只对过滤后的点）
@@ -345,9 +344,11 @@ class SceneLoader:
         '''
         场景下采样时同时对包裹进行下采样
         '''
-        if len(self._points, axis=0) <= output_points_num:
+        if self._points.shape[0] <= output_points_num:
             return
         # 转换为PyTorch张量并移到GPU（如果可用）
+        if not self._points.flags['C_CONTIGUOUS']:
+            self._points = np.ascontiguousarray(self._points)
         points_transpose = torch.from_numpy(self._points.reshape(1, self._points.shape[0], self._points.shape[1])).float()
         points_transpose = points_transpose.cuda()
         
@@ -360,13 +361,36 @@ class SceneLoader:
         self._opposite_direction_mask = self._opposite_direction_mask[sampled_idx]
         self._visibilitys = self._visibilitys[sampled_idx]
         for obj_id, pkg in self._packages.items():
-            pkg._Package__mask_in_scene = pkg.get_mask_in_scene()[sampled_idx]
-            pkg._Package__indices_in_scene = pkg.get_indices_in_scene()[sampled_idx]
-            pkg._Package__points = pkg.get_pointcloud()[sampled_idx]
-            pkg._Package__normals = pkg.get_normals()[sampled_idx]
-            pkg._Package__normals_before_flip = pkg.get_normals_before_flip()[sampled_idx]
-            pkg._Package__opposite_direction_mask = pkg.get_opposite_direction_mask()[sampled_idx]
-            pkg._Package__visibility = pkg.get_visibility()[sampled_idx]
+            # 获取包裹在场景中的掩码
+            original_mask = pkg.get_mask_in_scene()
+            
+            # 向量化操作：创建新的掩码
+            # 检查sampled_idx中的每个索引是否在original_mask范围内且为True
+            valid_indices_mask = sampled_idx < len(original_mask)  # 防止索引越界
+            new_mask = np.zeros(len(sampled_idx), dtype=bool)
+            
+            # 只对有效索引进行检查
+            if np.any(valid_indices_mask):
+                valid_sampled_idx = sampled_idx[valid_indices_mask]
+                new_mask[valid_indices_mask] = original_mask[valid_sampled_idx]
+            
+            # 更新包裹的数据
+            pkg._Package__mask_in_scene = new_mask
+            pkg._Package__indices_in_scene = np.where(new_mask)[0]
+            # 根据新掩码提取包裹的点云数据
+            if np.any(new_mask):
+                pkg._Package__points = self._points[new_mask]
+                pkg._Package__normals = self._normals[new_mask]
+                pkg._Package__normals_before_flip = self._normals_before_flip[new_mask]
+                pkg._Package__opposite_direction_mask = self._opposite_direction_mask[new_mask]
+                pkg._Package__visibility = self._visibilitys[new_mask]
+            else:
+                # 如果包裹没有点被保留，创建空数组
+                pkg._Package__points = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__normals = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__normals_before_flip = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__opposite_direction_mask = np.array([], dtype=bool)
+                pkg._Package__visibility = np.array([], dtype=np.float32)
 
     def get_pointcloud(self):
         # 获取点云数据

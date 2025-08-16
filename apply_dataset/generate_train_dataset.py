@@ -106,7 +106,7 @@ OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含O
 GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
 INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
-DEBUG = True  # 是否启用性能分析和调试模式
+DEBUG = False  # 是否启用性能分析和调试模式
 
 # 线程安全的打印锁
 print_lock = threading.Lock()

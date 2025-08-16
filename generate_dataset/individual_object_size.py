@@ -177,7 +177,7 @@ def process_single_cycle_scene(cycle_id, scene_id):
                 proportion = intersection / exposed_pixels_single
                 areas_id.append(proportion)
                 # 只在比例异常时打印详细信息
-                if proportion < 0.1 or proportion > 1.1:
+                if proportion > 1.01:
                     thread_safe_print(f"⚠️ 循环 {cycle_id}，场景 {scene_id} 中：物体 {i} 面积比例异常: {proportion:.4f}")
 
         # 构建当前循环和场景的保存路径

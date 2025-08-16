@@ -186,18 +186,23 @@ class SceneLoader:
             if np.max(raw_unique_ids) >= self._obj_num + 1:
                 raise ValueError(f"点云中的物体索引超出了self._obj_num+1，请检查数据集！") 
             # 获取超出的点索引
-            out_of_range_indices = np.where(raw_unique_ids >= self._obj_num)[0]
+            out_of_range_mask = self._raw_obj_ids >= self._obj_num
+            in_range_mask = self._raw_obj_ids < self._obj_num
             # 获取超出的点数量
-            num_out_of_range = len(out_of_range_indices)
+            num_out_of_range = np.sum(out_of_range_mask)
             if num_out_of_range >= 50:
                 raise ValueError(f"点云中的物体索引异常过多，请检查数据集！")
             else:
-                self._origin_points = self._raw_points[out_of_range_indices]
-                self._origin_obj_ids = self._raw_obj_ids[out_of_range_indices]
+                self._origin_points = self._raw_points[in_range_mask]
+                self._origin_obj_ids = self._raw_obj_ids[in_range_mask]
                 print(f'warn: {num_out_of_range}个点超出物体索引范围，已删除')
+        else:
+            # 正常情况直接计算
+            self._origin_points = self._raw_points
+            self._origin_obj_ids = self._raw_obj_ids
             
         self._points_in_camera, self._normals_in_camera, inlier_mask = self._filter_point_cloud()
-        self._obj_ids = self._raw_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
+        self._obj_ids = self._origin_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
 
         # 转换到世界坐标系
         self._points, self._normals_before_flip = self._transform_to_world_coordinates()

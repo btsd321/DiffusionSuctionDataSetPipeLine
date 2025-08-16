@@ -202,10 +202,10 @@ class LabelSolver:
                 os.makedirs(os.path.dirname(save_path))
         with h5py.File(save_path,'w') as f:
             f['points'] = self._output_pointcloud  # 使用处理后的点云
-            f['suction_or'] = self._output_normals_before_flip  # 输入翻转前的法向量
+            f['normals'] = self._output_normals_before_flip  # 输入翻转前的法向量
             f['normal_flip_mask'] = self._output_opposite_direction_mask  # 法向量翻转掩码, 需要训练
-            f['suction_wrench_scores'] = self._wrench_scores
-            f['suction_feasibility_scores'] = self._output_feasibility_scores
+            f['wrench_scores'] = self._wrench_scores
+            f['feasibility_scores'] = self._output_feasibility_scores
             f['visibility_scores'] = self._output_visibility
 
     def _cal_opposite_direction_mask(self):

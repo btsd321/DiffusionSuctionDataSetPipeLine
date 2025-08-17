@@ -429,7 +429,7 @@ class LabelSolver:
         d_collision_detected = cuda.device_array(N, dtype=np.bool_)
         
         # 启动GPU内核
-        threads_per_block = 512
+        threads_per_block = 128
         blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
         
         collision_kernel[blocks_per_grid, threads_per_block](

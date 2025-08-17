@@ -295,6 +295,7 @@ if __name__ == "__main__":
                     thread_safe_print(f"📊 进度: {completed_tasks}/{total_tasks} ({progress:.1f}%) - 循环{result_cycle_id:04d}-场景{result_scene_id:03d}")
                 else:
                     failed_tasks.append((result_cycle_id, result_scene_id, error_msg))
+                    thread_safe_print(f"❌ 循环 {result_cycle_id}，场景 {result_scene_id} 处理失败: {error_msg}")
                     
             except Exception as e:
                 completed_tasks += 1

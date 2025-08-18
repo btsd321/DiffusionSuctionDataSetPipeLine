@@ -106,12 +106,10 @@ OBJ_PATH = os.path.join(FLAGS.data_dir, 'OBJ')  # 3D物体模型目录：包含O
 GT_PATH = os.path.join(FLAGS.data_dir, 'gt')  # 真值数据路径：CSV格式的物体位姿标注
 INDIVIDUA_PATH = os.path.join(FLAGS.data_dir, 'individual_object_size')  # 单个物体尺寸标签目录：物体可见面积比例数据
 
-
+DEBUG = False  # 是否启用性能分析和调试模式
 
 # 线程安全的打印锁
 print_lock = threading.Lock()
-
-DEBUG = True  # 是否启用调试模式，开启后会输出更多调试信息和性能分析
 
 def thread_safe_print(message):
     """线程安全的打印函数"""
@@ -297,6 +295,7 @@ if __name__ == "__main__":
                     thread_safe_print(f"📊 进度: {completed_tasks}/{total_tasks} ({progress:.1f}%) - 循环{result_cycle_id:04d}-场景{result_scene_id:03d}")
                 else:
                     failed_tasks.append((result_cycle_id, result_scene_id, error_msg))
+                    thread_safe_print(f"❌ 循环 {result_cycle_id}，场景 {result_scene_id} 处理失败: {error_msg}")
                     
             except Exception as e:
                 completed_tasks += 1

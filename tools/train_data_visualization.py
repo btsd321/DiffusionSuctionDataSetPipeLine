@@ -241,7 +241,7 @@ def visualize_point_cloud_with_matplotlib(args, points, normals=None, normal_idx
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', type=str, default='D:/Diffusion_Suction_DataSet/train', help='数据集目录')
-    parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
+    parser.add_argument('--cycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=1, help='场景编号')
     parser.add_argument('--vision_normal_type', type=str, default='none', \
         choices=['none', 'random', 'composite_scores','wrench_scores','feasibility_scores', 'visibility_scores'], help='可视化向量排序类型')
@@ -253,7 +253,7 @@ def main():
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
     
-    h5_file_path = os.path.join(args.data_dir, 'cycle_' + str(args.clycle_id).zfill(4), str(args.scene_id).zfill(3) + '.h5')
+    h5_file_path = os.path.join(args.data_dir, 'cycle_' + str(args.cycle_id).zfill(4), str(args.scene_id).zfill(3) + '.h5')
     print(f'打开文件: {h5_file_path}')
     if not os.path.exists(h5_file_path):
         print(f"文件 {h5_file_path} 不存在，请检查路径。")

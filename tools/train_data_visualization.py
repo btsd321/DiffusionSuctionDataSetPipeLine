@@ -21,10 +21,11 @@ def read_h5_file(file_path):
     with h5py.File(file_path, 'r') as f:
         points = f['points'][:]
         normals = f['normals'][:]
+        origin_normal_flip_mask = f['normal_flip_mask'][:]
         wrench_scores = f['wrench_scores'][:]
         feasibility_scores = f['feasibility_scores'][:]
         visibility_scores = f['visibility_scores'][:]
-    return points, normals, wrench_scores, feasibility_scores, visibility_scores
+    return points, suction_or, suction_wrench_scores, suction_feasibility_scores, visibility_scores
 
 def create_coordinate_frame(size=0.1):
     """
@@ -242,23 +243,25 @@ def main():
     parser.add_argument('--clycle_id', type=int, default=0, help='循环编号')
     parser.add_argument('--scene_id', type=int, default=50, help='场景编号')
     parser.add_argument('--vision_normal_type', type=str, default='none', \
-        choices=['none', 'random', 'suction_score','suction_wrench_score','suction_feasibility_score', 'visibility_scores'], help='可视化向量排序类型')
+        choices=['none', 'random', 'composite_scores','wrench_scores','feasibility_scores', 'visibility_scores'], help='可视化向量排序类型')
     parser.add_argument('--vision_normal_num', type=int, default=100, help='可视化向量个数')
     parser.add_argument('--method', type=str, default='matplotlib', choices=['o3d', 'matplotlib'], help='可视化方法')
     parser.add_argument('--show_axis', type=bool, default=True, help='是否显示坐标轴')
-    parser.add_argument('--vision_score_type', type=str, default='suction_score', \
-        choices=['suction_score','suction_wrench_score','suction_feasibility_score', 'visibility_scores'], help='可视化分数类型')
+    parser.add_argument('--vision_score_type', type=str, default='feasibility_scores', \
+        choices=['composite_scores','wrench_scores','feasibility_scores', 'visibility_scores'], help='可视化分数类型')
     parser.add_argument('--show_heatmap', type=bool, default=True, help='是否显示热力图图')
     args = parser.parse_args()
     
-    h5_file_path = os.path.join(args.data_dir, 'cycle_' + str(args.clycle_id).zfill(4), str(args.scene_id).zfill(3) + '.h5')
+    h5_file_path = os.path.join(args.data_dir, 'cycle_' + str(args.cycle_id).zfill(4), str(args.scene_id).zfill(3) + '.h5')
     print(f'打开文件: {h5_file_path}')
     if not os.path.exists(h5_file_path):
         print(f"文件 {h5_file_path} 不存在，请检查路径。")
         return
-    point_cloud, normals, wrench_scores, feasibility_scores, visibility_scores = read_h5_file(h5_file_path)
+    point_cloud, normals, normal_flip_mask, wrench_scores, feasibility_scores, visibility_scores = read_h5_file(h5_file_path)
     feasibility_scores = feasibility_scores.astype(np.float32)
-    
+
+    normals[normal_flip_mask] = -normals[normal_flip_mask]
+
     print(f"数据维度检查:")
     print(f"point_cloud: {point_cloud.shape}")
     print(f"normals: {normals.shape}")
@@ -283,15 +286,15 @@ def main():
             wrench_scores = np.ascontiguousarray(wrench_scores)
             feasibility_scores = np.ascontiguousarray(feasibility_scores)
             visibility_scores = np.ascontiguousarray(visibility_scores)
-            
-    suction_score = wrench_scores * feasibility_scores * visibility_scores
-    
-    # 按照suction_score将点云排序
-    if args.vision_score_type =='suction_score':
-        sorted_indices = np.argsort(suction_score)[::-1]
-    elif args.vision_score_type =='suction_wrench_score':
+
+    composite_scores = wrench_scores * feasibility_scores * visibility_scores
+
+    # 按照composite_scores将点云排序
+    if args.vision_score_type =='composite_scores':
+        sorted_indices = np.argsort(composite_scores)[::-1]
+    elif args.vision_score_type =='wrench_scores':
         sorted_indices = np.argsort(wrench_scores)[::-1]
-    elif args.vision_score_type =='suction_feasibility_score':
+    elif args.vision_score_type =='feasibility_scores':
         sorted_indices = np.argsort(feasibility_scores)[::-1]
     elif args.vision_score_type == 'visibility_scores':
         sorted_indices = np.argsort(visibility_scores)[::-1]
@@ -301,11 +304,11 @@ def main():
     # 应用排序到所有数据
     point_cloud = point_cloud[sorted_indices]
     normals = normals[sorted_indices] if normals is not None else None
-    suction_score = suction_score[sorted_indices]
+    composite_scores = composite_scores[sorted_indices]
     wrench_scores = wrench_scores[sorted_indices]
     feasibility_scores = feasibility_scores[sorted_indices]
     visibility_scores = visibility_scores[sorted_indices]
-    
+
     # 取前args.vision_normal_num个向量
     vision_normals = None
     normal_idx = None
@@ -324,13 +327,13 @@ def main():
     
     # 获取当前可视化分数类型对应的分数
     score_map = {
-        'suction_score': suction_score,
-        'suction_wrench_score': wrench_scores,
-        'suction_feasibility_score': feasibility_scores,
+        'composite_scores': composite_scores,
+        'wrench_scores': wrench_scores,
+        'feasibility_scores': feasibility_scores,
         'visibility_scores': visibility_scores,
     }
-    current_scores = score_map.get(args.vision_score_type, suction_score)
-    
+    current_scores = score_map.get(args.vision_score_type, composite_scores)
+
     # 可视化分数直方图和点云
     print(f"点云形状: {point_cloud.shape}")
     

@@ -139,10 +139,9 @@ class LabelSolver:
         self._output_opposite_direction_mask = None
         self._output_visibility = None
         self._output_feasibility_scores = None
-        self._wrench_scores = None  # 扭矩评分
+        self._output_wrench_scores = None  # 扭矩评分
 
     def run(self):
-        print("开始计算标签数据...")
         input_point_cloud_num = self._input_loader.get_pointcloud().shape[0]
         if input_point_cloud_num < self._output_points_num:
             # 先计算分数再上采样
@@ -165,7 +164,7 @@ class LabelSolver:
             # normals_tile = np.tile(self._input_normals, [t, 1])
             # self._output_normals = normals_tile[:self._output_points_num]
             wrench_scores_tile = np.tile(origin_wrench_scores, t)
-            self._wrench_scores = wrench_scores_tile[:self._output_points_num]
+            self._output_wrench_scores = wrench_scores_tile[:self._output_points_num]
             opposite_direction_mask_tile = np.tile(origin_opposite_direction_mask, t)
             self._output_opposite_direction_mask = opposite_direction_mask_tile[:self._output_points_num]
             visibility_tile = np.tile(origin_visibility, t)
@@ -174,7 +173,7 @@ class LabelSolver:
             self._output_feasibility_scores = feasibility_scores_tile[:self._output_points_num]
         elif input_point_cloud_num == self._output_points_num:
             # 直接计算分数
-            self._wrench_scores = self._cal_wrench_scores()
+            self._output_wrench_scores = self._cal_wrench_scores()
             self._output_visibility = self._cal_visibility_scores()
             self._output_feasibility_scores = self._cal_feasibility_scores()
             self._output_opposite_direction_mask = self._cal_opposite_direction_mask()
@@ -187,12 +186,13 @@ class LabelSolver:
             self._input_normals = self._input_loader.get_normals()
             self._input_normals_before_flip = self._input_loader.get_normals_before_flip()
             self._input_packages = self._input_loader.get_packages()
-
-            self._wrench_scores = self._cal_wrench_scores()
+            
+            self._output_pointcloud = self._input_pointcloud
+            self._output_normals_before_flip = self._input_normals_before_flip
+            self._output_wrench_scores = self._cal_wrench_scores()
             self._output_opposite_direction_mask = self._cal_opposite_direction_mask()
             self._output_visibility = self._cal_visibility_scores()
             self._output_feasibility_scores = self._cal_feasibility_scores()
-        print("标签数据计算完成。")
 
     def save_to_h5(self, save_path:str = None):
         if save_path is None:
@@ -204,7 +204,7 @@ class LabelSolver:
             f['points'] = self._output_pointcloud  # 使用处理后的点云
             f['normals'] = self._output_normals_before_flip  # 输入翻转前的法向量
             f['normal_flip_mask'] = self._output_opposite_direction_mask  # 法向量翻转掩码, 需要训练
-            f['wrench_scores'] = self._wrench_scores
+            f['wrench_scores'] = self._output_wrench_scores
             f['feasibility_scores'] = self._output_feasibility_scores
             f['visibility_scores'] = self._output_visibility
 
@@ -321,7 +321,12 @@ class LabelSolver:
                 print(f"Error occurred while calculating feasibility scores: {e}")
                 raise e
         else:
-            return self.__cal_feasibility_scores_gpu(radius = radius, height = height)
+            try:
+                scores = self.__cal_feasibility_scores_gpu(radius = radius, height = height)
+                return scores
+            except Exception as e:
+                print(f"Error occurred while calculating feasibility scores: {e}")
+                raise e
         
         
     def __cal_feasibility_scores_gpu(self, radius=1.0, height=1.0):
@@ -424,7 +429,7 @@ class LabelSolver:
         d_collision_detected = cuda.device_array(N, dtype=np.bool_)
         
         # 启动GPU内核
-        threads_per_block = 512  # 每个线程块的线程数
+        threads_per_block = 128
         blocks_per_grid = (N + threads_per_block - 1) // threads_per_block
         
         collision_kernel[blocks_per_grid, threads_per_block](

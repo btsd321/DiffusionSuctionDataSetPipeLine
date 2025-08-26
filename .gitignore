@@ -155,3 +155,5 @@ windows_environment.yml
 # 测试文件
 check_physics_utils.txt
 check_png.txt
+
+.vscode

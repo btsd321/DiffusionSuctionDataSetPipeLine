@@ -30,6 +30,7 @@ class SceneLoader:
         self._depth_image = None
         self._segment_image = None
         self._obj_num = 0
+        self._raw_obj_ids  = None
         self._orgin_obj_ids = None  # 原始点云中每个点对应的物体在场景中的ID
         self._obj_ids = None # 滤波后点云中每个点对应的物体在场景中的ID
         self._label_trans = None
@@ -37,6 +38,7 @@ class SceneLoader:
         self._label_id = None
         self._label_name = None
         self._label_visibility = None # 物体可见性标签
+        self._raw_points = None
         self._origin_points = None # 原始点云数据
         self._points_in_camera = None # 滤波后的点云数据
         self._normals_in_camera = None # 滤波后的点云法向量
@@ -72,10 +74,10 @@ class SceneLoader:
             package_init_data = {
                 "points": self._points[indices],
                 "normals_before_flip": self._normals_before_flip[indices],
-                "center": self._label_trans[obj_id],
+                "center": self._label_trans[obj_id, :3],
                 "rotation": self._label_rot[obj_id],
                 "name": self._label_name[obj_id],
-                "visibility": self._label_visibility[obj_id],
+                "visibility": self._label_visibility[0, obj_id],
                 "mask": mask,
                 "indices": indices
             }
@@ -165,26 +167,48 @@ class SceneLoader:
             step = 1.0  # 单个物体时，物体ID归一化步长为1
         else:    
             step = 1/(self._obj_num - 1)
-        obj_ids = np.full(self._segment_image[:, :, 1].shape, 0, dtype=np.float32)
+        raw_obj_ids = np.full(self._segment_image[:, :, 1].shape, 0, dtype=np.float32)
         valid_mask = (self._segment_image[:, :, 0] > 0.5)  # 前景点掩码
         
         # 提取非零深度像素的坐标（前景点）
         ys, xs = np.where(valid_mask)
         zs = self._depth_image[valid_mask]
-        self._origin_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
-
+        self._raw_points = self._depth_to_pointcloud_optimized(xs, ys, zs, to_mm=False)
         segment_img_int = np.round(self._segment_image[:, :, 1] / step)
         # obj_ids 点所在物体在场景中的ID
-        orgin_obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
-        self._orgin_obj_ids = orgin_obj_ids.astype('int')  # 转换为整数类型
+        raw_obj_ids = segment_img_int[valid_mask] # 每个像素对应的物体ID
+        self._raw_obj_ids = raw_obj_ids.astype('int')  # 转换为整数类型
+        
+        # 如果有点云的物体索引超过self._obj_num-1，则检查多少个点索引超出了self._obj_num-1，如果较少则滤波，如果较多则直接抛出异常
+        raw_unique_ids = np.unique(self._raw_obj_ids)
+        if np.max(raw_unique_ids) >= self._obj_num:
+            # if np.max(raw_unique_ids) >= self._obj_num + 1:
+            #     raise ValueError(f"点云中的物体索引超出了self._obj_num+1，请检查数据集！") 
+            # 获取超出的点索引
+            out_of_range_mask = self._raw_obj_ids >= self._obj_num
+            in_range_mask = self._raw_obj_ids < self._obj_num
+            # 获取超出的点数量
+            num_out_of_range = np.sum(out_of_range_mask)
+            all_poins_num = self._raw_obj_ids.shape[0]
+            if num_out_of_range / all_poins_num >= 0.01:
+                raise ValueError(f"点云中的物体索引异常过多，请检查数据集！异常点云百分比为：{num_out_of_range / all_poins_num:.2%}")
+            else:
+                self._origin_points = self._raw_points[in_range_mask]
+                self._origin_obj_ids = self._raw_obj_ids[in_range_mask]
+                print(f'warn: {num_out_of_range}个点超出物体索引范围，占总数的{num_out_of_range / all_poins_num:.2%}，已删除')
+        else:
+            # 正常情况直接计算
+            self._origin_points = self._raw_points
+            self._origin_obj_ids = self._raw_obj_ids
+            
+        self._points_in_camera, self._normals_in_camera, inlier_mask = self._filter_point_cloud(self._origin_points, points_coordinate = "camera")
+        self._obj_ids = self._origin_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
+        # 滤波后点云转换到世界坐标系下
+        self._points, self._normals_before_flip = self._transform_to_world_coordinates(self._points_in_camera, self._normals_in_camera)
 
-        self._points_in_camera, self._normals_in_camera, inlier_mask = self._filter_point_cloud()
-        self._obj_ids = self._orgin_obj_ids[inlier_mask]  # 滤波后点云中每个点对应的物体ID
+        
 
-        # 转换到世界坐标系
-        self._points, self._normals_before_flip = self._transform_to_world_coordinates()
-
-    def _transform_to_world_coordinates(self):
+    def _transform_to_world_coordinates(self, points_in_camera, normals_in_camera):
         """
         将点云从相机坐标系转换到世界坐标系
         
@@ -195,8 +219,8 @@ class SceneLoader:
             numpy.ndarray: 转换后的点云坐标，形状为(N, 3)
         """
         # 将3D点扩展为齐次坐标（添加第4维度为1）
-        ones = np.ones((self._points_in_camera.shape[0], 1))
-        points_homo = np.hstack([self._points_in_camera, ones])  # 形状: (N, 4)
+        ones = np.ones((points_in_camera.shape[0], 1))
+        points_homo = np.hstack([points_in_camera, ones])  # 形状: (N, 4)
         
         #外参矩阵为W2C矩阵即世界坐标系转相机坐标系的矩阵，因此需要先计算C2W
         c2w = np.linalg.inv(self._camera_info.extrinsic_matrix)
@@ -211,9 +235,8 @@ class SceneLoader:
         # 法向量只需要旋转变换，提取旋转矩阵部分
         rotation_matrix = self._camera_info.extrinsic_matrix[:3, :3].T
         
-        print(f'normals.shape : {self._normals_in_camera.shape}')
         # 应用旋转变换
-        normals_world = (rotation_matrix @ self._normals_in_camera.T).T # 形状: (N, 3)
+        normals_world = (rotation_matrix @ normals_in_camera.T).T # 形状: (N, 3)
         
         # 重新归一化法向量
         norms = np.linalg.norm(normals_world, axis=1, keepdims=True)
@@ -224,11 +247,11 @@ class SceneLoader:
         return points_world, normals_world
         
 
-    def _filter_point_cloud(self, nb_points = 16, filter_radius = 0.01, z_threshold = 0.7):
+    def _filter_point_cloud(self, points, points_coordinate: str = "camera", nb_points = 16, filter_radius = 0.01, z_threshold = 0.7):
         try:
             # 创建Open3D点云对象
             pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(self._origin_points)
+            pcd.points = o3d.utility.Vector3dVector(points)
             
             # 应用半径滤波
             pcd_filtered, inlier_indices_radius = pcd.remove_radius_outlier(
@@ -239,11 +262,11 @@ class SceneLoader:
             radius_filtered_points = np.asarray(pcd_filtered.points)
             
             # 创建正确的索引掩码
-            inlier_mask1 = np.zeros(self._origin_points.shape[0], dtype=bool)
+            inlier_mask1 = np.zeros(points.shape[0], dtype=bool)
             inlier_mask1[inlier_indices_radius] = True
             
-            print(f"半径滤波: 原始点数 {self._origin_points.shape[0]}, 过滤后点数 {radius_filtered_points.shape[0]}")
-            print(f"掩码统计: True={np.sum(inlier_mask1)}, False={np.sum(~inlier_mask1)}")
+            # print(f"半径滤波: 原始点数 {points.shape[0]}, 过滤后点数 {radius_filtered_points.shape[0]}")
+            # print(f"掩码统计: True={np.sum(inlier_mask1)}, False={np.sum(~inlier_mask1)}")
             # self._obj_ids_after_filter_1 = self._orgin_obj_ids[inlier_mask1]  # 滤波后点云中每个点对应的物体ID
 
             # 计算法向量（只对过滤后的点）
@@ -261,10 +284,25 @@ class SceneLoader:
             else:
                 radius_filter_normals = np.array([]).reshape(0, 3)
 
-            # 直通滤波
-            # 创建Z轴过滤掩码：保留Z坐标小于等于阈值的点
-            z_filter_mask = radius_filtered_points[:, 2] <= z_threshold
-            
+            # 直通滤波,滤除世界坐标系下Z轴大于阈值的点
+            z_filter_mask = None
+            if points_coordinate == "world":
+                # 创建Z轴过滤掩码：保留Z坐标小于等于阈值的点
+                z_filter_mask = radius_filtered_points[:, 2] <= z_threshold
+            elif points_coordinate == "camera":
+                # 转换到世界坐标系
+                origin_points_in_world, origin_normals_before_flip_in_world = self._transform_to_world_coordinates(radius_filtered_points, radius_filter_normals)
+                # 创建Z轴过滤掩码：保留Z坐标小于等于阈值的点
+                z_filter_mask = origin_points_in_world[:, 2] <= z_threshold
+                filter_num = origin_points_in_world.shape[0] - np.sum(z_filter_mask)
+                if filter_num > 0:
+                    filter_percent = filter_num / origin_points_in_world.shape[0]
+                    if filter_percent >= 0.01:
+                        raise ValueError(f"在相机坐标系下过滤点云时，过滤点数过多({filter_num}个)，占总点数百分比为{filter_percent:.2%}，请检查数据集！")
+                    print(f"warn: 在相机坐标系下过滤点云时，{filter_num}个点被过滤掉，占总点数百分比为{filter_percent:.2%}，Z轴大于阈值({z_threshold})")
+                    
+            else:
+                raise ValueError(f"未知的点云坐标系: {points_coordinate}, 只能是'camera'或'world'")
             # 过滤点云和法向量
             z_filtered_points = radius_filtered_points[z_filter_mask]
             z_filtered_normals = radius_filter_normals[z_filter_mask]
@@ -280,6 +318,7 @@ class SceneLoader:
             filter_mask[z_passed_indices] = True
             
             return z_filtered_points, z_filtered_normals, filter_mask
+                
         except Exception as e:
             print(f"半径滤波失败，使用原始点云: {e}")
             identity_mask = np.ones(self._origin_points.shape[0], dtype=bool)
@@ -345,9 +384,11 @@ class SceneLoader:
         '''
         场景下采样时同时对包裹进行下采样
         '''
-        if len(self._points, axis=0) <= output_points_num:
+        if self._points.shape[0] <= output_points_num:
             return
         # 转换为PyTorch张量并移到GPU（如果可用）
+        if not self._points.flags['C_CONTIGUOUS']:
+            self._points = np.ascontiguousarray(self._points)
         points_transpose = torch.from_numpy(self._points.reshape(1, self._points.shape[0], self._points.shape[1])).float()
         points_transpose = points_transpose.cuda()
         
@@ -360,13 +401,36 @@ class SceneLoader:
         self._opposite_direction_mask = self._opposite_direction_mask[sampled_idx]
         self._visibilitys = self._visibilitys[sampled_idx]
         for obj_id, pkg in self._packages.items():
-            pkg._Package__mask_in_scene = pkg.get_mask_in_scene()[sampled_idx]
-            pkg._Package__indices_in_scene = pkg.get_indices_in_scene()[sampled_idx]
-            pkg._Package__points = pkg.get_pointcloud()[sampled_idx]
-            pkg._Package__normals = pkg.get_normals()[sampled_idx]
-            pkg._Package__normals_before_flip = pkg.get_normals_before_flip()[sampled_idx]
-            pkg._Package__opposite_direction_mask = pkg.get_opposite_direction_mask()[sampled_idx]
-            pkg._Package__visibility = pkg.get_visibility()[sampled_idx]
+            # 获取包裹在场景中的掩码
+            original_mask = pkg.get_mask_in_scene()
+            
+            # 向量化操作：创建新的掩码
+            # 检查sampled_idx中的每个索引是否在original_mask范围内且为True
+            valid_indices_mask = sampled_idx < len(original_mask)  # 防止索引越界
+            new_mask = np.zeros(len(sampled_idx), dtype=bool)
+            
+            # 只对有效索引进行检查
+            if np.any(valid_indices_mask):
+                valid_sampled_idx = sampled_idx[valid_indices_mask]
+                new_mask[valid_indices_mask] = original_mask[valid_sampled_idx]
+            
+            # 更新包裹的数据
+            pkg._Package__mask_in_scene = new_mask
+            pkg._Package__indices_in_scene = np.where(new_mask)[0]
+            # 根据新掩码提取包裹的点云数据
+            if np.any(new_mask):
+                pkg._Package__points = self._points[new_mask]
+                pkg._Package__normals = self._normals[new_mask]
+                pkg._Package__normals_before_flip = self._normals_before_flip[new_mask]
+                pkg._Package__opposite_direction_mask = self._opposite_direction_mask[new_mask]
+                pkg._Package__visibility = self._visibilitys[new_mask]
+            else:
+                # 如果包裹没有点被保留，创建空数组
+                pkg._Package__points = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__normals = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__normals_before_flip = np.array([], dtype=np.float32).reshape(0, 3)
+                pkg._Package__opposite_direction_mask = np.array([], dtype=bool)
+                pkg._Package__visibility = np.array([], dtype=np.float32)
 
     def get_pointcloud(self):
         # 获取点云数据

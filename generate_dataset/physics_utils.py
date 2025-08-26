@@ -228,7 +228,6 @@ class GenerateSimulationResult:
         # 进行若干步仿真, 使物体稳定
         for _ in range(160):
             pybullet.stepSimulation()
-            time.sleep(1. / 240)
         if self.show_GUI:
             for _ in range(1000):
                 pybullet.stepSimulation()
